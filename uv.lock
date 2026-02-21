@@ -992,6 +992,17 @@ wheels = [
 ]
 
 [[package]]
+name = "private-assistant-openwakeword"
+version = "0.6.0"
+source = { git = "https://github.com/dscripka/openWakeWord?rev=refs%2Fpull%2F216%2Fhead#e49345ad04d8cc64aac2e3bfb43a47e7c9c2d7e6" }
+dependencies = [
+    { name = "requests" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "tqdm" },
+]
+
+[[package]]
 name = "propcache"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1665,6 +1676,7 @@ dependencies = [
     { name = "ollama" },
     { name = "onnxruntime" },
     { name = "piper-tts" },
+    { name = "private-assistant-openwakeword" },
     { name = "psutil" },
     { name = "pyaudio" },
     { name = "pyyaml" },
@@ -1709,6 +1721,7 @@ requires-dist = [
     { name = "ollama", specifier = ">=0.4.0" },
     { name = "onnxruntime", specifier = ">=1.17.0" },
     { name = "piper-tts", specifier = ">=1.2.0" },
+    { name = "private-assistant-openwakeword", git = "https://github.com/dscripka/openWakeWord?rev=refs%2Fpull%2F216%2Fhead" },
     { name = "psutil", specifier = ">=6.0" },
     { name = "pyaudio", specifier = ">=0.2.14" },
     { name = "pyqt6", marker = "extra == 'ui'", specifier = ">=6.7" },

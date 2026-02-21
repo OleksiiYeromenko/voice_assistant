@@ -13,6 +13,8 @@ dependencies = [
     "requests>=2.32.5",
     "scipy>=1.17.0",
     "scikit-learn>=1.8.0",
+    # "openwakeword",
+    "private-assistant-openwakeword",
     # STT
     "faster-whisper>=1.1.0",
     # LLM - Ollama
@@ -22,6 +24,10 @@ dependencies = [
     # Resource monitoring
     "psutil>=6.0",
 ]
+
+[tool.uv.sources]
+# Overrides the PyPI package, fetching a patched version that removes tflite-runtime
+private-assistant-openwakeword = { git = "https://github.com/dscripka/openWakeWord", rev = "refs/pull/216/head" }
 
 [project.optional-dependencies]
 cloud = [
@@ -42,6 +48,8 @@ dev = [
 all = [
     "voice-assistant[cloud,tools,ui,dev]",
 ]
+
+
 
 [project.scripts]
 va = "src.main:main"
