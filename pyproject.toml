@@ -1,7 +1,61 @@
 [project]
 name = "voice-assistant"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
+description = "Local-first voice assistant for Raspberry Pi 5"
 requires-python = ">=3.13"
-dependencies = []
+
+dependencies = [
+    # Core
+    "pyyaml>=6.0",
+    # Wake word — install from git, override tflite dep with onnxruntime only
+    "onnxruntime>=1.17.0",
+    "pyaudio>=0.2.14",
+    "requests>=2.32.5",
+    "scipy>=1.17.0",
+    "scikit-learn>=1.8.0",
+    # STT
+    "faster-whisper>=1.1.0",
+    # LLM - Ollama
+    "ollama>=0.4.0",
+    # TTS
+    "piper-tts>=1.2.0",
+    # Resource monitoring
+    "psutil>=6.0",
+]
+
+[project.optional-dependencies]
+cloud = [
+    "anthropic>=0.40.0",
+    "google-genai>=1.0.0",
+]
+tools = [
+    "httpx>=0.27.0",         # web search, weather API
+    "gkeepapi>=0.16.0",      # Google Keep
+]
+ui = [
+    "pyqt6>=6.7",
+]
+dev = [
+    "ruff>=0.8.0",
+    "pytest>=8.0",
+]
+all = [
+    "voice-assistant[cloud,tools,ui,dev]",
+]
+
+[project.scripts]
+va = "src.main:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
