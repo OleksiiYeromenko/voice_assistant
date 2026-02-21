@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Voice Assistant — RPi 5 Setup
+# Run once: bash scripts/setup.sh
+
+set -euo pipefail
+
+echo "=== Voice Assistant Setup ==="
+echo ""
+
+# 1. System dependencies
+echo "→ Checking system packages..."
+NEEDED=""
+dpkg -s espeak-ng &>/dev/null || NEEDED="$NEEDED espeak-ng"
+dpkg -s alsa-utils &>/dev/null || NEEDED="$NEEDED alsa-utils"
+dpkg -s portaudio19-dev &>/dev/null || NEEDED="$NEEDED portaudio19-dev"
+
+if [ -n "$NEEDED" ]; then
+    echo "  Installing:$NEEDED"
+    sudo apt update -qq
+    sudo apt install -y -qq $NEEDED
+else
+    echo "  ✓ All system packages present"
+fi
+
+# 2. Python dependencies
+echo "→ Installing Python dependencies..."
+uv sync
+uv sync --extra cloud --extra tools
+echo "  ✓ Python deps installed"
+
+# 3. Ollama model
+echo "→ Checking Ollama model..."
+if command -v ollama &>/dev/null; then
+    if ollama list 2>/dev/null | grep -q "qwen3"; then
+        echo "  ✓ Qwen3 model already pulled"
+    else
+        echo "  Pulling qwen3:4b (this takes a few minutes)..."
+        ollama pull qwen3:4b
+        echo "  ✓ qwen3:4b ready"
+    fi
+else
+    echo "  ⚠ Ollama not installed — install from https://ollama.com"
+fi
+
+# 4. Piper voice
+echo "→ Checking Piper voice..."
+VOICE_DIR="./voices"
+VOICE_FILE="${VOICE_DIR}/en_US-hfc_male-medium.onnx"
+if [ -f "$VOICE_FILE" ]; then
+    echo "  ✓ Voice already exists"
+else
+    mkdir -p "$VOICE_DIR"
+    echo "  Downloading voice model..."
+    wget -q --show-progress -P "$VOICE_DIR" \
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx"
+    wget -q --show-progress -P "$VOICE_DIR" \
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx.json"
+    echo "  ✓ Voice downloaded"
+fi
+
+# 5. Directories
+mkdir -p data tts_output stt_output
+
+# 6. Detect audio devices
+echo ""
+echo "→ Detecting audio devices..."
+echo "  Playback:"
+aplay -l 2>/dev/null | grep "^card" | while read line; do echo "    $line"; done
+echo "  Capture:"
+arecord -l 2>/dev/null | grep "^card" | while read line; do echo "    $line"; done
+
+# 7. Find mic device index
+echo ""
+echo "→ Finding microphone for PyAudio..."
+uv run scripts/list_audio_devices.py 2>/dev/null || echo "  (run 'uv run scripts/list_audio_devices.py' manually)"
+
+# 8. Summary
+echo ""
+echo "========================================="
+echo "  Setup Complete!"
+echo "========================================="
+echo ""
+echo "Next steps:"
+echo ""
+echo "  1. Set mic device (if needed):"
+echo "     Edit config/config.yaml → stt.mic_device_index"
+echo ""
+echo "  2. Set cloud API keys (optional):"
+echo "     export ANTHROPIC_API_KEY='sk-ant-...'"
+echo "     export GOOGLE_API_KEY='...'"
+echo ""
+echo "  3. Test components:"
+echo "     uv run scripts/test_components.py router"
+echo "     uv run scripts/test_components.py weather"
+echo "     uv run scripts/test_components.py tts"
+echo "     uv run scripts/test_components.py stt"
+echo "     uv run scripts/test_components.py llm"
+echo ""
+echo "  4. Run the assistant:"
+echo "     uv run python -m src.main --no-wake"
+echo ""
