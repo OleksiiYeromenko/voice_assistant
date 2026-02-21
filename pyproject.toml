@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     # Core
     "pyyaml>=6.0",
+    "pathvalidate>=3.3.1",
     # Wake word — install from git, override tflite dep with onnxruntime only
     "onnxruntime>=1.17.0",
     "pyaudio>=0.2.14",
