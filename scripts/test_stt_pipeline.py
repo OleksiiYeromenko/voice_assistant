@@ -132,15 +132,28 @@ def main():
     print("STT Pipeline Diagnostic (using arecord)")
     print("=" * 60)
 
-    # Kill any lingering audio processes
-    print("\nCleaning up ...")
-    for proc in ("arecord", "aplay"):
-        subprocess.run(["killall", "-q", proc], capture_output=True)
-    time.sleep(0.5)
-
-    # Find ALSA device
+    # Find ALSA device first (read-only, doesn't open it)
     print()
     device = find_alsa_capture_device()
+
+    # Kill ALL processes holding the sound card
+    print("\nReleasing audio device ...")
+    card_num = device.split(":")[1].split(",")[0]
+    dev_path = f"/dev/snd/pcmC{card_num}D0c"
+    print(f"  Checking {dev_path} ...")
+
+    subprocess.run(["killall", "-q", "arecord", "aplay"], capture_output=True)
+
+    result = subprocess.run(["fuser", "-v", dev_path], capture_output=True, text=True)
+    fuser_out = (result.stdout + result.stderr).strip()
+    if fuser_out:
+        print(f"  {fuser_out}")
+        print(f"  Running: fuser -k {dev_path}")
+        subprocess.run(["fuser", "-k", dev_path], capture_output=True)
+        time.sleep(2)
+        print("  Done.")
+    else:
+        print("  Device is free.")
 
     # Load Whisper once
     print("\nLoading Whisper model (base.en) ...")
