@@ -205,8 +205,9 @@ def assistant_loop(cfg: dict):
     # Conversation history (simple list, could add persistence later)
     conversation: list[dict] = []
 
-    # Wake word (optional — can also run in keyboard mode)
-    use_wake_word = "--no-wake" not in sys.argv
+    # Input mode: --text (type messages) | --no-wake (press Enter → STT) | default (wake word)
+    use_text_input = "--text" in sys.argv
+    use_wake_word = "--no-wake" not in sys.argv and not use_text_input
     wake_detector = None
 
     if use_wake_word:
@@ -225,7 +226,18 @@ def assistant_loop(cfg: dict):
     log.info("Voice assistant ready!")
     log.info(f"Resources: {snapshot().summary()}")
 
-    if use_wake_word:
+    if use_text_input:
+        log.info("Text input mode — type your message, Ctrl+C to quit.")
+        while True:
+            try:
+                user_text = input("\n[Type message] ").strip()
+                if not user_text:
+                    continue
+                _handle_interaction(stt, tts, router, backends, system_prompt, conversation, cfg, text=user_text)
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                break
+    elif use_wake_word:
         log.info("Say the wake word to start...")
         for confidence in wake_detector.listen():
             _handle_interaction(stt, tts, router, backends, system_prompt, conversation, cfg)
@@ -240,21 +252,22 @@ def assistant_loop(cfg: dict):
                 break
 
 
-def _handle_interaction(stt, tts, router, backends, system_prompt, conversation, cfg):
+def _handle_interaction(stt, tts, router, backends, system_prompt, conversation, cfg, text=None):
     """Handle one full interaction cycle."""
     latency = LatencyRecord()
     start = time.perf_counter()
 
-    # 1. STT
-    with Timer() as stt_timer:
-        text, rec_time, trans_time = stt.record_and_transcribe(
-            silence_timeout_s=cfg["stt"]["silence_timeout_s"],
-        )
-    latency.stt_ms = stt_timer.elapsed_ms
+    # 1. STT (skip if text provided directly, e.g. --text mode)
+    if text is None:
+        with Timer() as stt_timer:
+            text, rec_time, trans_time = stt.record_and_transcribe(
+                silence_timeout_s=cfg["stt"]["silence_timeout_s"],
+            )
+        latency.stt_ms = stt_timer.elapsed_ms
 
-    if not text:
-        log.info("No speech detected.")
-        return
+        if not text:
+            log.info("No speech detected.")
+            return
 
     print(f"\n🎤 You: {text}")
 
