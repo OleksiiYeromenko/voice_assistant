@@ -85,37 +85,44 @@ def run_llm_with_tools(
     tts: TTSEngine,
     latency: LatencyRecord,
 ) -> str:
-    """Run LLM, handle tool calls, stream TTS. Returns full response text."""
+    """Run LLM with tool calling and per-sentence streaming TTS."""
     full_response = ""
 
     for round_num in range(MAX_TOOL_ROUNDS):
-        # Collect streaming response
-        text_buffer = ""
         tool_calls: list[ToolCall] = []
-        first_token = True
+        text_buffer = ""
+        printed_prefix = False
 
-        with Timer() as llm_timer:
-            for chunk in backend.stream(messages, tools=tools, system=system):
-                if first_token and chunk.text:
-                    latency.llm_first_token_ms = llm_timer.mark()
-                    first_token = False
-                    print("\n🤖 ", end="", flush=True)
+        def token_gen():
+            """Yield visible text tokens; silently collect tool_calls + thinking."""
+            first_token_seen = False
+            with Timer() as t:
+                for chunk in backend.stream(messages, tools=tools, system=system):
+                    if chunk.text:
+                        if not first_token_seen:
+                            first_token_seen = True
+                            if round_num == 0:
+                                latency.llm_first_token_ms = t.mark()
+                        yield chunk.text
+                    if chunk.thinking:
+                        log.debug(f"[think] {chunk.thinking}")
+                    tool_calls.extend(chunk.tool_calls)
+            latency.llm_ms += t.elapsed_ms
+            latency.model_used = backend.name
 
-                if chunk.text:
-                    print(chunk.text, end="", flush=True)
-                if chunk.thinking:
-                    log.debug(f"[think] {chunk.thinking}")
-                text_buffer += chunk.text
-                tool_calls.extend(chunk.tool_calls)
+        # Stream tokens through TTS — speaks complete sentences as they arrive
+        for text in tts.stream_speak(token_gen()):
+            if not printed_prefix:
+                print("\n🤖 ", end="", flush=True)
+                printed_prefix = True
+            text_buffer += text
+            print(text, end="", flush=True)
+
         if text_buffer.strip():
             print()  # newline after streaming
 
-        latency.llm_ms += llm_timer.elapsed_ms
-        latency.model_used = backend.name
-
-        # If there are tool calls, execute them and continue
+        # If tool calls were issued, execute them and loop
         if tool_calls:
-            # Add assistant's tool call message
             messages.append({"role": "assistant", "content": text_buffer or ""})
 
             for tc in tool_calls:
@@ -126,17 +133,11 @@ def run_llm_with_tools(
                     "tool_name": tc.name,
                     "content": result,
                 })
-
-            # Loop back for the LLM to generate a final response with tool results
             continue
 
         # No tool calls — this is the final text response
         full_response = text_buffer.strip()
         break
-
-    # Speak the final response with streaming TTS
-    if full_response:
-        tts.speak(full_response)
 
     return full_response
 
@@ -277,7 +278,7 @@ def _handle_interaction(stt, tts, router, backends, system_prompt, conversation,
     # 4. LLM + Tools + TTS
     try:
         # For local model: use tool calling path
-        if decision.backend_key == "local":
+        if decision.backend_key in ("local", "local_think"):
             response = run_llm_with_tools(
                 backend, list(recent), ALL_TOOLS, system_prompt, tts, latency,
             )
