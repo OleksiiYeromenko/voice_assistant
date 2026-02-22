@@ -11,6 +11,9 @@ Usage:
   uv run scripts/test_stt_pipeline.py
 """
 
+import os
+import signal
+import subprocess
 import sys
 import time
 import wave
@@ -31,8 +34,57 @@ DURATION_S = 5
 
 
 # ---------------------------------------------------------------------------
+# Cleanup: kill processes that hold the audio device
+# ---------------------------------------------------------------------------
+def release_audio_devices():
+    """Kill any processes that may be holding the audio device."""
+    # Terminate any lingering PyAudio / arecord / aplay processes
+    for proc_name in ("arecord", "aplay"):
+        subprocess.run(["killall", "-q", proc_name], capture_output=True)
+
+    # Also kill any python processes that have /dev/snd open,
+    # EXCEPT our own PID
+    my_pid = os.getpid()
+    try:
+        result = subprocess.run(
+            ["fuser", "/dev/snd/pcmC1D0c"],  # capture device on card 1
+            capture_output=True, text=True,
+        )
+        if result.stdout.strip():
+            pids = result.stdout.strip().split()
+            for pid_str in pids:
+                pid = int(pid_str.strip().rstrip("m"))
+                if pid != my_pid:
+                    print(f"  Killing PID {pid} holding audio device")
+                    os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass  # fuser not available or no processes
+
+    time.sleep(0.5)  # let devices settle
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def list_devices(pa: pyaudio.PyAudio):
+    """Print all input devices so we can see what's available."""
+    print("  Available input devices:")
+    found_any = False
+    for i in range(pa.get_device_count()):
+        try:
+            info = pa.get_device_info_by_index(i)
+            if info["maxInputChannels"] > 0:
+                found_any = True
+                name = info["name"]
+                rate = int(info["defaultSampleRate"])
+                usb = " [USB]" if "usb" in name.lower() else ""
+                print(f"    index={i}  rate={rate}  name='{name}'{usb}")
+        except Exception:
+            continue
+    if not found_any:
+        print("    (none found!)")
+
+
 def save_wav(path: Path, audio: np.ndarray, rate: int):
     """Write int16 numpy array to WAV file."""
     with wave.open(str(path), "wb") as wf:
@@ -66,7 +118,7 @@ def record(pa: pyaudio.PyAudio, device_index: int, rate: int, duration_s: float)
     total_samples = int(rate * duration_s)
     frames = []
     collected = 0
-    last_sec = 0
+    last_sec = -1
     t_start = time.monotonic()
 
     while collected < total_samples:
@@ -80,13 +132,13 @@ def record(pa: pyaudio.PyAudio, device_index: int, rate: int, duration_s: float)
         frames.append(data)
         collected += CHUNK
 
-        # Print countdown
+        # Print countdown every second
         elapsed = time.monotonic() - t_start
         sec = int(elapsed)
         if sec > last_sec:
             last_sec = sec
             remaining = max(0, duration_s - elapsed)
-            print(f"  ... {remaining:.0f}s remaining  ({collected} samples)", flush=True)
+            print(f"    {sec}s / {duration_s}s ...", flush=True)
 
     stream.stop_stream()
     stream.close()
@@ -118,9 +170,22 @@ def main():
     print("STT Pipeline Diagnostic")
     print("=" * 60)
 
-    # Detect mic
+    # Step 0: Release any held audio devices
+    print("\nReleasing audio devices ...")
+    release_audio_devices()
+
+    # Fresh PyAudio instance after cleanup
     pa = pyaudio.PyAudio()
-    mic_idx, native_rate = find_mic(pa)
+    list_devices(pa)
+
+    try:
+        mic_idx, native_rate = find_mic(pa)
+    except RuntimeError as e:
+        print(f"\nFATAL: {e}")
+        print("Check that your USB mic is plugged in. Run: arecord -l")
+        pa.terminate()
+        sys.exit(1)
+
     print(f"\nMic: index={mic_idx}, native rate={native_rate} Hz\n")
 
     # Load Whisper once
@@ -165,9 +230,9 @@ def main():
         wav3 = OUTPUT_DIR / "03_direct_16khz.wav"
         save_wav(wav3, audio_direct, 16000)
         transcribe(audio_direct, model, "direct 16k")
-    except OSError as e:
-        print(f"  FAILED to open mic at 16 kHz: {e}")
-        print("  This mic does not support 16 kHz directly.")
+    except Exception as e:
+        print(f"  FAILED to open/record at 16 kHz: {e}")
+        print("  This mic may not support 16 kHz directly.")
 
     pa.terminate()
 
