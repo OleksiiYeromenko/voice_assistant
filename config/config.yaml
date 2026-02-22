@@ -17,9 +17,9 @@ stt:
   language: "en"
   vad_filter: true
   silence_timeout_s: 1.5   # Seconds of silence before STT finalizes
-  # null = auto-detect USB microphone by name (survives device index changes on reboot).
-  # Set to an integer to force a specific PyAudio device index.
-  mic_device_index: null
+  # null = auto-detect USB mic via 'arecord -l' (survives device index changes on reboot).
+  # Set to an ALSA device string like "plughw:1,0" to force a specific device.
+  alsa_device: null
 
 # --- LLM ---
 llm:

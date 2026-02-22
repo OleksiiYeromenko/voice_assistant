@@ -160,7 +160,7 @@ def assistant_loop(cfg: dict):
         beam_size=stt_cfg["beam_size"],
         language=stt_cfg["language"],
         vad_filter=stt_cfg["vad_filter"],
-        mic_device_index=stt_cfg.get("mic_device_index"),
+        alsa_device=stt_cfg.get("alsa_device"),
     )
     stt.load()
 
@@ -191,7 +191,7 @@ def assistant_loop(cfg: dict):
             wake_detector = WakeWordDetector(
                 model=ww_cfg["model"],
                 threshold=ww_cfg["threshold"],
-                mic_device_index=stt_cfg.get("mic_device_index"),
+                alsa_device=stt_cfg.get("alsa_device"),
             )
         except Exception as e:
             log.warning(f"Wake word not available: {e}. Using keyboard mode.")

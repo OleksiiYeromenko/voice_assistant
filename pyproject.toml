@@ -10,7 +10,6 @@ dependencies = [
     "pathvalidate>=3.3.1",
     # Wake word — install from git, override tflite dep with onnxruntime only
     "onnxruntime>=1.17.0",
-    "pyaudio>=0.2.14",
     "requests>=2.32.5",
     "scipy>=1.17.0",
     "scikit-learn>=1.8.0",

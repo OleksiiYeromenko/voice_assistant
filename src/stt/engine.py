@@ -1,22 +1,23 @@
 """Speech-to-Text using faster-whisper.
 
-Records audio after wake word, detects silence to stop, then transcribes.
-Handles USB microphones that only support 44100 Hz by resampling to 16 kHz.
+Records audio via arecord (ALSA) after wake word, detects silence to stop,
+then transcribes.  The ``plughw`` ALSA plugin resamples from the mic's native
+rate (e.g. 44100 Hz) to 16 kHz transparently.
 """
 
 import logging
 import time
 
 import numpy as np
-import pyaudio
 
-from src.audio import find_mic, resample
+from src.audio import find_alsa_device, record_stream
 
 log = logging.getLogger(__name__)
 
-TARGET_RATE = 16000  # Whisper expects 16 kHz
+RATE = 16000  # arecord records at 16 kHz via plughw
 CHANNELS = 1
 CHUNK_SAMPLES = 1024
+CHUNK_BYTES = CHUNK_SAMPLES * 2  # int16 = 2 bytes per sample
 
 
 class STTEngine:
@@ -28,31 +29,21 @@ class STTEngine:
         beam_size: int = 1,
         language: str = "en",
         vad_filter: bool = True,
-        mic_device_index: int | None = None,
+        alsa_device: str | None = None,
     ):
         self.model_size = model_size
         self.beam_size = beam_size
         self.language = language
         self.vad_filter = vad_filter
         self.model = None
-        self._preferred_mic_index = mic_device_index
+        self._alsa_device = alsa_device
 
         self._device = device
         self._compute_type = compute_type
 
-        # Populated by _detect_mic()
-        self._mic_index: int | None = None
-        self._native_rate: int | None = None
-
-    def _detect_mic(self):
-        """Detect microphone once and cache device index + native rate."""
-        if self._native_rate is not None:
-            return
-        pa = pyaudio.PyAudio()
-        try:
-            self._mic_index, self._native_rate = find_mic(pa, self._preferred_mic_index)
-        finally:
-            pa.terminate()
+    def _ensure_alsa_device(self):
+        if self._alsa_device is None:
+            self._alsa_device = find_alsa_device()
 
     def load(self):
         """Load the whisper model. Call once at startup."""
@@ -78,28 +69,21 @@ class STTEngine:
         silence_threshold: int = 500,
     ) -> np.ndarray:
         """Record from mic until silence is detected. Returns int16 numpy array at 16 kHz."""
-        self._detect_mic()
-        native_rate = self._native_rate
-
-        pa = pyaudio.PyAudio()
-        stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=CHANNELS,
-            rate=native_rate,
-            input=True,
-            frames_per_buffer=CHUNK_SAMPLES,
-            input_device_index=self._mic_index,
-        )
+        self._ensure_alsa_device()
 
         frames: list[bytes] = []
         silent_chunks = 0
-        max_silent_chunks = int(native_rate / CHUNK_SAMPLES * silence_timeout_s)
-        max_chunks = int(native_rate / CHUNK_SAMPLES * max_duration_s)
+        max_silent_chunks = int(RATE / CHUNK_SAMPLES * silence_timeout_s)
+        max_chunks = int(RATE / CHUNK_SAMPLES * max_duration_s)
 
-        log.info(f"Recording at {native_rate} Hz ...")
-        try:
+        log.info(f"Recording at {RATE} Hz via {self._alsa_device} ...")
+
+        with record_stream(self._alsa_device, RATE) as stream:
             for _ in range(max_chunks):
-                data = stream.read(CHUNK_SAMPLES, exception_on_overflow=False)
+                data = stream.read(CHUNK_BYTES)
+                if not data or len(data) < CHUNK_BYTES:
+                    log.warning("arecord stream ended unexpectedly")
+                    break
                 frames.append(data)
 
                 # Simple energy-based silence detection
@@ -113,18 +97,10 @@ class STTEngine:
                         break
                 else:
                     silent_chunks = 0
-        finally:
-            stream.stop_stream()
-            stream.close()
-            pa.terminate()
 
-        audio_native = np.frombuffer(b"".join(frames), dtype=np.int16)
-
-        # Resample to 16 kHz for Whisper
-        audio = resample(audio_native, native_rate, TARGET_RATE)
-
-        duration = len(audio) / TARGET_RATE
-        log.info(f"Recorded {duration:.1f}s ({native_rate} -> {TARGET_RATE} Hz)")
+        audio = np.frombuffer(b"".join(frames), dtype=np.int16)
+        duration = len(audio) / RATE
+        log.info(f"Recorded {duration:.1f}s of audio")
         return audio
 
     def transcribe(self, audio: np.ndarray) -> tuple[str, float]:
@@ -132,8 +108,7 @@ class STTEngine:
         if self.model is None:
             self.load()
 
-        # faster-whisper accepts file path or numpy array
-        # Convert int16 to float32 in [-1, 1]
+        # faster-whisper expects float32 in [-1, 1]
         audio_f32 = audio.astype(np.float32) / 32768.0
 
         start = time.perf_counter()

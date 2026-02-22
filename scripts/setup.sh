@@ -2,7 +2,7 @@
 # Voice Assistant — RPi 5 one-time setup.
 #
 # This script handles system-level setup that pyproject.toml / uv cannot:
-#   1. System packages via apt (espeak-ng, alsa-utils, portaudio19-dev)
+#   1. System packages via apt (espeak-ng, alsa-utils)
 #   2. Python deps via uv sync (convenience wrapper)
 #   3. Ollama model download (qwen3:4b, ~2.5 GB)
 #   4. Piper voice model download from HuggingFace (~65 MB)
@@ -22,7 +22,7 @@ echo "→ Checking system packages..."
 NEEDED=""
 dpkg -s espeak-ng &>/dev/null || NEEDED="$NEEDED espeak-ng"
 dpkg -s alsa-utils &>/dev/null || NEEDED="$NEEDED alsa-utils"
-dpkg -s portaudio19-dev &>/dev/null || NEEDED="$NEEDED portaudio19-dev"
+# portaudio19-dev no longer needed — we use arecord (ALSA) directly
 
 if [ -n "$NEEDED" ]; then
     echo "  Installing:$NEEDED"
@@ -79,9 +79,9 @@ aplay -l 2>/dev/null | grep "^card" | while read line; do echo "    $line"; done
 echo "  Capture:"
 arecord -l 2>/dev/null | grep "^card" | while read line; do echo "    $line"; done
 
-# 7. Find mic device index
+# 7. List audio devices (ALSA)
 echo ""
-echo "→ Finding microphone for PyAudio..."
+echo "→ Listing audio devices..."
 uv run scripts/list_audio_devices.py 2>/dev/null || echo "  (run 'uv run scripts/list_audio_devices.py' manually)"
 
 # 8. Summary
@@ -92,8 +92,9 @@ echo "========================================="
 echo ""
 echo "Next steps:"
 echo ""
-echo "  1. Set mic device (if needed):"
-echo "     Edit config/config.yaml → stt.mic_device_index"
+echo "  1. Set ALSA device (if needed):"
+echo "     Edit config/config.yaml → stt.alsa_device"
+echo "     (null = auto-detect USB mic via arecord -l)"
 echo ""
 echo "  2. Set cloud API keys (optional):"
 echo "     export ANTHROPIC_API_KEY='sk-ant-...'"

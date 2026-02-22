@@ -26,8 +26,8 @@ def test_stt():
     from src.config import load_config
 
     cfg = load_config()
-    mic_idx = cfg["stt"].get("mic_device_index")
-    stt = STTEngine(model_size="base.en", mic_device_index=mic_idx)
+    alsa_dev = cfg["stt"].get("alsa_device")
+    stt = STTEngine(model_size="base.en", alsa_device=alsa_dev)
     stt.load()
     text, rec_time, trans_time = stt.record_and_transcribe(max_duration_s=5.0)
     print(f"  Text: {text}")
