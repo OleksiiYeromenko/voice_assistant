@@ -6,7 +6,9 @@ This means the user hears audio while the LLM is still generating.
 """
 
 import logging
+import math
 import re
+import struct
 import subprocess
 import time
 import wave
@@ -27,8 +29,65 @@ class TTSEngine:
     ):
         self.voice = voice
         self.aplay_device = aplay_device
+        self._interrupted = False
+        self._beep_path: str | None = None
         OUTPUT_DIR.mkdir(exist_ok=True)
 
+    # ------------------------------------------------------------------
+    # Interrupt mechanism
+    # ------------------------------------------------------------------
+    def interrupt(self):
+        """Signal TTS to stop playback immediately."""
+        self._interrupted = True
+
+    def _reset_interrupt(self):
+        self._interrupted = False
+
+    # ------------------------------------------------------------------
+    # Acknowledgment beep
+    # ------------------------------------------------------------------
+    def _ensure_beep(self):
+        """Generate a short beep WAV if it doesn't exist."""
+        path = OUTPUT_DIR / "beep.wav"
+        if path.exists():
+            self._beep_path = str(path)
+            return
+
+        sample_rate = 22050
+        duration = 0.15  # 150 ms
+        freq = 880  # A5 note
+        n_samples = int(sample_rate * duration)
+
+        with wave.open(str(path), "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            for i in range(n_samples):
+                t = i / sample_rate
+                # Fade in/out to avoid clicks
+                envelope = min(t / 0.01, 1.0) * min((duration - t) / 0.01, 1.0)
+                sample = int(16000 * envelope * math.sin(2 * math.pi * freq * t))
+                wf.writeframes(struct.pack("<h", max(-32768, min(32767, sample))))
+
+        self._beep_path = str(path)
+        log.debug("Beep WAV generated")
+
+    def play_beep(self) -> subprocess.Popen | None:
+        """Play acknowledgment beep (non-blocking). Returns Popen or None."""
+        self._ensure_beep()
+        try:
+            return subprocess.Popen(
+                ["aplay", "-D", self.aplay_device, self._beep_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            log.warning(f"Beep failed: {e}")
+            return None
+
+    # ------------------------------------------------------------------
+    # Core TTS
+    # ------------------------------------------------------------------
     def synthesize(self, text: str) -> tuple[str, float, float]:
         """Synthesize text to WAV file. Returns (path, synth_time_s, audio_duration_s)."""
         output_path = str(OUTPUT_DIR / f"tts_{int(time.time() * 1000)}.wav")
@@ -63,15 +122,26 @@ class TTSEngine:
         if result.returncode != 0:
             log.error(f"Playback error: {result.stderr.decode().strip()}")
 
-    def _wait_for_playback(self, proc: subprocess.Popen | None):
-        """Wait for a non-blocking playback process to finish and log errors."""
+    def _wait_for_playback(self, proc: subprocess.Popen | None, poll_interval: float = 0.05):
+        """Wait for playback process, polling periodically for interrupt.
+
+        Returns True if playback completed normally, False if interrupted.
+        """
         if proc is None:
-            return
-        proc.wait()
+            return True
+
+        while proc.poll() is None:
+            if self._interrupted:
+                proc.terminate()
+                proc.wait()
+                return False
+            time.sleep(poll_interval)
+
         if proc.returncode != 0:
             stderr = proc.stderr.read().decode().strip() if proc.stderr else ""
             if stderr:
                 log.error(f"Playback error: {stderr}")
+        return True
 
     def speak(self, text: str):
         """Synthesize and play a complete text."""
@@ -81,7 +151,11 @@ class TTSEngine:
         log.info(f"TTS: {synth_time:.2f}s synth, {duration:.2f}s audio")
         self.play(path)
 
-    def stream_speak(self, token_stream: Generator[str, None, None]) -> Generator[str, None, None]:
+    def stream_speak(
+        self,
+        token_stream: Generator[str, None, None],
+        latency=None,
+    ) -> Generator[str, None, None]:
         """Consume a token stream, buffer sentences, and speak each one as soon as ready.
 
         Playback is non-blocking: while sentence N plays via aplay, we continue
@@ -89,14 +163,24 @@ class TTSEngine:
 
         Yields each token for display/logging purposes.
 
+        Args:
+            token_stream: generator yielding text tokens from the LLM.
+            latency: optional LatencyRecord to track TTS first-chunk timing.
+
         Usage:
             for text in tts.stream_speak(llm_token_generator):
                 print(text, end="", flush=True)
         """
+        self._reset_interrupt()
         buffer = ""
         play_proc: subprocess.Popen | None = None
+        stream_start = time.perf_counter()
+        first_chunk_recorded = False
 
         for token in token_stream:
+            if self._interrupted:
+                break
+
             buffer += token
             yield token  # Pass through for display
 
@@ -114,24 +198,33 @@ class TTSEngine:
                         path, synth_time, duration = self.synthesize(complete)
 
                         # Wait for previous playback, then start new one (non-blocking)
-                        self._wait_for_playback(play_proc)
+                        if not self._wait_for_playback(play_proc):
+                            break  # Interrupted during wait
                         play_proc = subprocess.Popen(
                             ["aplay", "-D", self.aplay_device, path],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE,
                         )
 
-        # Speak any remaining text in buffer
-        remaining = buffer.strip()
-        if remaining:
-            log.debug(f"TTS remainder: '{remaining}'")
-            path, _, _ = self.synthesize(remaining)
-            self._wait_for_playback(play_proc)
-            play_proc = subprocess.Popen(
-                ["aplay", "-D", self.aplay_device, path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
+                        # Track time to first audio chunk
+                        if not first_chunk_recorded and latency is not None:
+                            latency.tts_first_chunk_ms = (
+                                time.perf_counter() - stream_start
+                            ) * 1000
+                            first_chunk_recorded = True
 
-        # Wait for final playback to complete before returning
+        # Speak any remaining text in buffer (skip if interrupted)
+        if not self._interrupted:
+            remaining = buffer.strip()
+            if remaining:
+                log.debug(f"TTS remainder: '{remaining}'")
+                path, _, _ = self.synthesize(remaining)
+                if self._wait_for_playback(play_proc):
+                    play_proc = subprocess.Popen(
+                        ["aplay", "-D", self.aplay_device, path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                    )
+
+        # Wait for final playback to complete (or interrupted)
         self._wait_for_playback(play_proc)

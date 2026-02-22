@@ -71,8 +71,31 @@ SHOPPING_LIST_TOOL = {
 }
 
 
+REMEMBER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "remember",
+        "description": (
+            "Store a fact about the user for future reference. "
+            "Use this when the user says 'remember that...', 'my name is...', "
+            "'I like...', or shares important personal information."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["fact"],
+            "properties": {
+                "fact": {
+                    "type": "string",
+                    "description": "The fact to remember, e.g. 'User prefers metric units'",
+                },
+            },
+        },
+    },
+}
+
+
 # All available tool schemas
-ALL_TOOLS = [WEATHER_TOOL, WEB_SEARCH_TOOL, SHOPPING_LIST_TOOL]
+ALL_TOOLS = [WEATHER_TOOL, WEB_SEARCH_TOOL, SHOPPING_LIST_TOOL, REMEMBER_TOOL]
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +194,15 @@ _TOOL_FUNCTIONS: dict[str, callable] = {
     "web_search": web_search,
     "add_to_shopping_list": add_to_shopping_list,
 }
+
+
+def register_tool(name: str, fn: callable):
+    """Register a dynamic tool function (e.g., memory-backed tools).
+
+    The tool schema must already be in ALL_TOOLS for the LLM to know about it.
+    """
+    _TOOL_FUNCTIONS[name] = fn
+    log.info(f"Registered dynamic tool: {name}")
 
 
 def execute_tool(name: str, arguments: dict[str, Any]) -> str:

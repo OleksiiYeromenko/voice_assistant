@@ -10,17 +10,10 @@ Priority:
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
 
-from src.llm.backends import LLMBackend, ClaudeBackend, GeminiBackend, OllamaBackend
+from src.llm.backends import LLMBackend
 
 log = logging.getLogger(__name__)
-
-DEFAULT_TRIGGERS: dict[str, list[str]] = {
-    "claude": ["use claude", "ask claude", "switch to claude", "with claude"],
-    "gemini": ["use gemini", "ask gemini", "switch to gemini", "with gemini"],
-    "local": ["use local", "go offline", "use ollama", "go back to automatic"],
-}
 
 
 @dataclass
@@ -37,7 +30,7 @@ class ModelRouter:
         triggers: dict[str, list[str]] | None = None,
     ):
         self.backends = backends
-        self.triggers = triggers or DEFAULT_TRIGGERS
+        self.triggers = triggers or {}
         self.session_preference: str | None = None  # Sticky preference
 
     def route(self, text: str) -> RouteDecision:

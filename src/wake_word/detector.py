@@ -47,6 +47,52 @@ class WakeWordDetector:
         if self._alsa_device is None:
             self._alsa_device = find_alsa_device()
 
+    def detect_once(self, timeout_s: float = 120.0) -> bool:
+        """Listen for a single wake word detection. Returns True if detected.
+
+        Unlike :meth:`listen`, this blocks until detection or timeout and does
+        NOT yield.  Designed for use in a background thread during TTS playback
+        to enable interruption.
+        """
+        import time
+
+        self._ensure_alsa_device()
+        start = time.perf_counter()
+
+        proc = subprocess.Popen(
+            [
+                "arecord",
+                "-D", self._alsa_device,
+                "-f", "S16_LE",
+                "-c", str(CHANNELS),
+                "-r", str(RATE),
+                "-t", "raw",
+                "-q",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+        try:
+            while time.perf_counter() - start < timeout_s:
+                data = proc.stdout.read(CHUNK_BYTES)
+                if not data or len(data) < CHUNK_BYTES:
+                    break
+
+                audio_16k = np.frombuffer(data, dtype=np.int16)
+                prediction = self.oww.predict(audio_16k)
+
+                for model_name, score in prediction.items():
+                    if score >= self.threshold:
+                        log.info(f"Wake word interrupt '{model_name}': {score:.3f}")
+                        self.oww.reset()
+                        return True
+            return False
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait()
+
     def listen(self) -> Generator[float, None, None]:
         """Block and yield confidence score each time wake word is detected.
 

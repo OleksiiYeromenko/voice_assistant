@@ -24,8 +24,12 @@ stt:
 # --- LLM ---
 llm:
   base_url: "http://localhost:11434"   # Shared Ollama URL for all local models
+  # Tip: Set these env vars for Ollama on Raspberry Pi:
+  #   OLLAMA_KEEP_ALIVE="-1"         # Keep models loaded indefinitely (default: 5m)
+  #   OLLAMA_FLASH_ATTENTION=1       # Lower memory as context grows
+  #   OLLAMA_KV_CACHE_TYPE=q8_0      # Half the KV cache memory vs f16
 
-  # Fast local model — default for everyday queries (no thinking)
+  # Fast local model — default for everyday queries
   local:
     model: "qwen2.5:3b"
     temperature: 0.7
@@ -36,18 +40,7 @@ llm:
       Keep responses concise and conversational — they will be spoken aloud.
       Prefer 1-3 sentence answers unless the user asks for detail.
       When you need to use a tool, call it. Do not describe the tool call.
-
-  # Thinking model — for complex reasoning (say "think about ..." or "analyze ...")
-  local_think:
-    model: "qwen3:4b"
-    temperature: 0.7
-    num_ctx: 4096
-    think: true
-    system_prompt: |
-      You are a helpful home voice assistant running on a Raspberry Pi.
-      Think carefully, then give a clear, conversational answer that will be spoken aloud.
-      Keep the spoken answer to 2-4 sentences even if the reasoning is complex.
-      When you need to use a tool, call it. Do not describe the tool call.
+      If the user asks you to remember something, use the remember tool.
 
   cloud:
     claude:
@@ -60,11 +53,6 @@ llm:
   router:
     # Patterns that trigger model selection
     triggers:
-      local_think:
-        - "think about"
-        - "analyze"
-        - "explain in detail"
-        - "reason about"
       claude:
         - "use claude"
         - "ask claude"
@@ -95,7 +83,16 @@ tts:
   aplay_device: "plughw:0,0"  # USB audio device
   sentence_delimiters: ".!?;"
 
+# --- Session ---
+session:
+  inactivity_timeout_s: 300  # 5 minutes — session ends after this gap
+  auto_summarize: true       # Summarize conversation on session end
+
 # --- Resource Monitoring ---
 monitor:
   enabled: true
   log_interval_s: 30         # Log CPU/RAM/temp every N seconds
+  thresholds:
+    ram_percent: 85           # Warn if RAM usage exceeds this %
+    cpu_percent: 95           # Warn if CPU exceeds this %
+    temp_celsius: 80          # Warn if CPU temp exceeds this °C

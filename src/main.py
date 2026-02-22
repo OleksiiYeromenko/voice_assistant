@@ -5,16 +5,18 @@ Wires together: wake word → STT → router → LLM (+ tools) → streaming TTS
 
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
 from src.config import load_config
-from src.monitor import LatencyRecord, Timer, snapshot
+from src.memory import MemoryStore
+from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
 from src.stt.engine import STTEngine
 from src.tts.engine import TTSEngine
 from src.llm.backends import OllamaBackend, ClaudeBackend, GeminiBackend, LLMChunk, ToolCall
 from src.router.router import ModelRouter
-from src.tools.executor import ALL_TOOLS, execute_tool
+from src.tools.executor import ALL_TOOLS, execute_tool, register_tool
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +24,9 @@ log = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 3
 
 
+# ---------------------------------------------------------------------------
+# Backend construction
+# ---------------------------------------------------------------------------
 def build_backends(cfg: dict) -> dict:
     """Create LLM backends from config."""
     backends = {}
@@ -37,21 +42,6 @@ def build_backends(cfg: dict) -> dict:
         system_prompt=local_cfg["system_prompt"],
         think=local_cfg.get("think", False),
     )
-
-    # Thinking local model — optional
-    try:
-        think_cfg = cfg["llm"]["local_think"]
-        backends["local_think"] = OllamaBackend(
-            model=think_cfg["model"],
-            base_url=base_url,
-            temperature=think_cfg["temperature"],
-            num_ctx=think_cfg["num_ctx"],
-            system_prompt=think_cfg["system_prompt"],
-            think=think_cfg.get("think", True),
-        )
-        log.info(f"Thinking backend available: {think_cfg['model']}")
-    except Exception as e:
-        log.warning(f"Thinking backend not available: {e}")
 
     # Cloud backends — optional, fail gracefully
     try:
@@ -77,6 +67,9 @@ def build_backends(cfg: dict) -> dict:
     return backends
 
 
+# ---------------------------------------------------------------------------
+# LLM streaming with tool calling
+# ---------------------------------------------------------------------------
 def run_llm_with_tools(
     backend,
     messages: list[dict],
@@ -111,7 +104,7 @@ def run_llm_with_tools(
             latency.model_used = backend.name
 
         # Stream tokens through TTS — speaks complete sentences as they arrive
-        for text in tts.stream_speak(token_gen()):
+        for text in tts.stream_speak(token_gen(), latency=latency):
             if not printed_prefix:
                 print("\n🤖 ", end="", flush=True)
                 printed_prefix = True
@@ -150,14 +143,14 @@ def run_streaming_llm(
     tts: TTSEngine,
     latency: LatencyRecord,
 ) -> str:
-    """Stream LLM → TTS sentence-by-sentence. No tool calling in this path."""
+    """Stream LLM → TTS sentence-by-sentence with tool support for cloud models."""
     full_text = ""
     first_token = True
 
     def token_gen():
         nonlocal first_token, latency
         with Timer() as t:
-            for chunk in backend.stream(messages, system=system):
+            for chunk in backend.stream(messages, tools=tools, system=system):
                 if first_token and chunk.text:
                     latency.llm_first_token_ms = t.mark()
                     first_token = False
@@ -166,7 +159,7 @@ def run_streaming_llm(
         latency.llm_ms = t.elapsed_ms
         latency.model_used = backend.name
 
-    for text in tts.stream_speak(token_gen()):
+    for text in tts.stream_speak(token_gen(), latency=latency):
         full_text += text
         print(text, end="", flush=True)
 
@@ -174,6 +167,73 @@ def run_streaming_llm(
     return full_text.strip()
 
 
+# ---------------------------------------------------------------------------
+# TTS interruption via background wake word detection
+# ---------------------------------------------------------------------------
+def _start_interrupt_listener(wake_detector, tts) -> threading.Thread | None:
+    """Spawn a background thread that listens for wake word and interrupts TTS."""
+    if wake_detector is None:
+        return None
+
+    def _listen():
+        try:
+            if wake_detector.detect_once(timeout_s=120):
+                log.info("Wake word detected during TTS — interrupting")
+                tts.interrupt()
+        except Exception as e:
+            log.debug(f"Interrupt listener error: {e}")
+
+    t = threading.Thread(target=_listen, daemon=True, name="interrupt-listener")
+    t.start()
+    return t
+
+
+# ---------------------------------------------------------------------------
+# Session management
+# ---------------------------------------------------------------------------
+def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time):
+    """Check if session has expired. If so, summarize and clear."""
+    timeout = cfg.get("session", {}).get("inactivity_timeout_s", 300)
+
+    if not conversation or last_interaction_time is None:
+        return
+
+    elapsed = time.time() - last_interaction_time
+    if elapsed < timeout:
+        return
+
+    log.info(f"Session expired ({elapsed:.0f}s idle). Summarizing...")
+
+    if cfg.get("session", {}).get("auto_summarize", True) and memory and len(conversation) >= 4:
+        backend = backends.get("local")
+        if backend:
+            summary_messages = list(conversation[-10:])
+            summary_messages.append({
+                "role": "user",
+                "content": "Summarize this conversation in one sentence for future reference.",
+            })
+            summary_text = ""
+            try:
+                for chunk in backend.stream(
+                    summary_messages,
+                    system="You are a summarizer. Respond with exactly one sentence.",
+                ):
+                    if chunk.text:
+                        summary_text += chunk.text
+
+                if summary_text.strip():
+                    memory.add_session_summary(summary_text.strip())
+                    log.info(f"Session summary: {summary_text.strip()}")
+            except Exception as e:
+                log.warning(f"Session summary failed: {e}")
+
+    conversation.clear()
+    log.info("Conversation history cleared for new session.")
+
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
 def assistant_loop(cfg: dict):
     """Main loop: wake word → STT → LLM → TTS, repeat."""
     # Initialize components
@@ -195,15 +255,26 @@ def assistant_loop(cfg: dict):
     )
 
     backends = build_backends(cfg)
+
+    # Warm-start: preload local model into RAM
+    local_backend = backends.get("local")
+    if local_backend and hasattr(local_backend, "warm"):
+        local_backend.warm()
+
     router = ModelRouter(
         backends=backends,
         triggers=cfg["llm"]["router"]["triggers"],
     )
 
-    system_prompt = cfg["llm"]["local"]["system_prompt"]
+    # Persistent memory
+    memory = MemoryStore()
+    register_tool("remember", lambda fact: memory.add_fact(fact))
 
-    # Conversation history (simple list, could add persistence later)
+    base_system_prompt = cfg["llm"]["local"]["system_prompt"]
+
+    # Conversation history
     conversation: list[dict] = []
+    last_interaction_time: float | None = None
 
     # Input mode: --text (type messages) | --no-wake (press Enter → STT) | default (wake word)
     use_text_input = "--text" in sys.argv
@@ -233,26 +304,45 @@ def assistant_loop(cfg: dict):
                 user_text = input("\n[Type message] ").strip()
                 if not user_text:
                     continue
-                _handle_interaction(stt, tts, router, backends, system_prompt, conversation, cfg, text=user_text)
+                _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time)
+                _handle_interaction(
+                    stt, tts, router, backends, base_system_prompt,
+                    conversation, cfg, memory=memory, text=user_text,
+                )
+                last_interaction_time = time.time()
             except (EOFError, KeyboardInterrupt):
                 print("\nGoodbye!")
                 break
     elif use_wake_word:
         log.info("Say the wake word to start...")
         for confidence in wake_detector.listen():
-            _handle_interaction(stt, tts, router, backends, system_prompt, conversation, cfg)
+            tts.play_beep()  # Acknowledge wake word (non-blocking, plays on speaker)
+            _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time)
+            _handle_interaction(
+                stt, tts, router, backends, base_system_prompt,
+                conversation, cfg, memory=memory, wake_detector=wake_detector,
+            )
+            last_interaction_time = time.time()
     else:
         log.info("Keyboard mode — press Enter to speak, Ctrl+C to quit.")
         while True:
             try:
                 input("\n[Press Enter to speak] ")
-                _handle_interaction(stt, tts, router, backends, system_prompt, conversation, cfg)
+                _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time)
+                _handle_interaction(
+                    stt, tts, router, backends, base_system_prompt,
+                    conversation, cfg, memory=memory,
+                )
+                last_interaction_time = time.time()
             except (EOFError, KeyboardInterrupt):
                 print("\nGoodbye!")
                 break
 
 
-def _handle_interaction(stt, tts, router, backends, system_prompt, conversation, cfg, text=None):
+def _handle_interaction(
+    stt, tts, router, backends, base_system_prompt, conversation, cfg,
+    *, memory=None, wake_detector=None, text=None,
+):
     """Handle one full interaction cycle."""
     latency = LatencyRecord()
     start = time.perf_counter()
@@ -282,27 +372,32 @@ def _handle_interaction(stt, tts, router, backends, system_prompt, conversation,
     if decision.backend_key != "local":
         print(f"  [Using {decision.backend_key}]")
 
-    # 3. Build messages
+    # 3. Build messages with memory context
     conversation.append({"role": "user", "content": decision.cleaned_text})
-
-    # Keep conversation short to fit context window
     recent = conversation[-10:]  # Last 5 turns
 
-    # 4. LLM + Tools + TTS
+    system_prompt = base_system_prompt
+    if memory:
+        memory_section = memory.build_prompt_section()
+        if memory_section:
+            system_prompt = base_system_prompt + memory_section
+
+    # 4. Start interrupt listener (background wake word detection during TTS)
+    #    Started AFTER STT so mic is free.
+    interrupt_thread = _start_interrupt_listener(wake_detector, tts)
+
+    # 5. LLM + Tools + TTS
     try:
-        # For local model: use tool calling path
-        if decision.backend_key in ("local", "local_think"):
+        if decision.backend_key == "local":
             response = run_llm_with_tools(
                 backend, list(recent), ALL_TOOLS, system_prompt, tts, latency,
             )
         else:
-            # Cloud models: stream directly (simpler, tools can be added later)
             response = run_streaming_llm(
                 backend, list(recent), ALL_TOOLS, system_prompt, tts, latency,
             )
     except Exception as e:
         log.error(f"LLM failed: {e}")
-        # Fallback
         fallback = router.get_fallback(decision.backend_key)
         if fallback:
             print(f"  [Falling back to {fallback.name}]")
@@ -319,10 +414,16 @@ def _handle_interaction(stt, tts, router, backends, system_prompt, conversation,
 
     conversation.append({"role": "assistant", "content": response})
 
-    # 5. Log metrics
+    # 6. Log metrics + resource alerts
     latency.total_ms = (time.perf_counter() - start) * 1000
     print(f"  📊 {latency.summary()}")
-    log.info(f"Resources: {snapshot().summary()}")
+    snap = snapshot()
+    log.info(f"Resources: {snap.summary()}")
+    thresholds = cfg.get("monitor", {}).get("thresholds", {})
+    if thresholds:
+        alerts = check_thresholds(snap, thresholds)
+        for alert in alerts:
+            print(f"  ⚠️  {alert}")
 
 
 def main():

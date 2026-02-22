@@ -5,6 +5,7 @@ All backends implement the same streaming interface.
 
 import json
 import logging
+import time
 from collections.abc import Generator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -71,6 +72,21 @@ class OllamaBackend:
     @property
     def name(self) -> str:
         return f"local/{self._model}"
+
+    def warm(self):
+        """Send a minimal request to preload the model into memory."""
+        try:
+            log.info(f"Warming up {self._model}...")
+            start = time.perf_counter()
+            self._client.chat(
+                model=self._model,
+                messages=[{"role": "user", "content": "hi"}],
+                options={"num_predict": 1, "num_ctx": 32},
+            )
+            elapsed = time.perf_counter() - start
+            log.info(f"Model {self._model} warm in {elapsed:.1f}s")
+        except Exception as e:
+            log.warning(f"Warm-up failed for {self._model}: {e}")
 
     def stream(
         self,
@@ -201,13 +217,41 @@ class ClaudeBackend:
 
         try:
             with self._client.messages.stream(**kwargs) as stream:
+                current_tool_name = ""
+                current_tool_json = ""
+
                 for event in stream:
-                    if hasattr(event, "type"):
-                        if event.type == "content_block_delta":
-                            if hasattr(event.delta, "text"):
-                                yield LLMChunk(text=event.delta.text, model=self.name)
-                        elif event.type == "message_stop":
-                            yield LLMChunk(done=True, model=self.name)
+                    if not hasattr(event, "type"):
+                        continue
+
+                    if event.type == "content_block_start":
+                        cb = getattr(event, "content_block", None)
+                        if cb and getattr(cb, "type", None) == "tool_use":
+                            current_tool_name = getattr(cb, "name", "")
+                            current_tool_json = ""
+
+                    elif event.type == "content_block_delta":
+                        delta = event.delta
+                        if hasattr(delta, "text"):
+                            yield LLMChunk(text=delta.text, model=self.name)
+                        elif hasattr(delta, "partial_json"):
+                            current_tool_json += delta.partial_json
+
+                    elif event.type == "content_block_stop":
+                        if current_tool_name:
+                            try:
+                                args = json.loads(current_tool_json) if current_tool_json else {}
+                            except json.JSONDecodeError:
+                                args = {}
+                            yield LLMChunk(
+                                tool_calls=[ToolCall(name=current_tool_name, arguments=args)],
+                                model=self.name,
+                            )
+                            current_tool_name = ""
+                            current_tool_json = ""
+
+                    elif event.type == "message_stop":
+                        yield LLMChunk(done=True, model=self.name)
         except Exception as e:
             log.error(f"Claude error: {e}")
             yield LLMChunk(

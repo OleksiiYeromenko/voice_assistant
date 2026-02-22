@@ -13,7 +13,6 @@ from contextlib import contextmanager
 from typing import IO
 
 import numpy as np
-from scipy import signal
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +88,8 @@ def resample(audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
     if from_rate == to_rate:
         return audio
 
+    from scipy import signal as scipy_signal
+
     num_samples = int(len(audio) * to_rate / from_rate)
-    resampled = signal.resample(audio.astype(np.float32), num_samples)
+    resampled = scipy_signal.resample(audio.astype(np.float32), num_samples)
     return np.clip(resampled, -32768, 32767).astype(np.int16)

@@ -81,6 +81,28 @@ def snapshot() -> ResourceSnapshot:
     )
 
 
+def check_thresholds(snap: ResourceSnapshot, thresholds: dict) -> list[str]:
+    """Check resource snapshot against configured thresholds. Returns warning messages."""
+    warnings = []
+
+    ram_pct = (snap.ram_used_mb / snap.ram_total_mb) * 100
+    if ram_pct > thresholds.get("ram_percent", 85):
+        warnings.append(
+            f"RAM usage high: {ram_pct:.0f}% ({snap.ram_used_mb:.0f}/{snap.ram_total_mb:.0f} MB)"
+        )
+
+    if snap.cpu_percent > thresholds.get("cpu_percent", 95):
+        warnings.append(f"CPU usage high: {snap.cpu_percent:.0f}%")
+
+    if snap.temp_celsius and snap.temp_celsius > thresholds.get("temp_celsius", 80):
+        warnings.append(f"CPU temperature high: {snap.temp_celsius:.1f}°C")
+
+    for w in warnings:
+        log.warning(f"RESOURCE ALERT: {w}")
+
+    return warnings
+
+
 class Timer:
     """Simple context-manager timer that records elapsed ms."""
 
