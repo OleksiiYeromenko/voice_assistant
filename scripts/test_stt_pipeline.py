@@ -36,20 +36,22 @@ DURATION_S = 5
 # ---------------------------------------------------------------------------
 def find_alsa_capture_device() -> str:
     """Find the USB capture device using arecord -l. Returns ALSA hw string."""
+    import re
+
     result = subprocess.run(["arecord", "-l"], capture_output=True, text=True)
     print("  arecord -l output:")
     for line in result.stdout.strip().splitlines():
         print(f"    {line}")
 
-    # Parse "card N: ... device M: ..."
+    # Parse "card N: ... device M: ..." using regex
     for line in result.stdout.splitlines():
-        if "USB" in line and "card" in line:
-            parts = line.split(":")
-            card = parts[0].split()[-1]  # card N
-            device = parts[1].split(",")[0].strip().split()[-1]  # device M
-            hw = f"plughw:{card},{device}"
-            print(f"\n  Using ALSA device: {hw}")
-            return hw
+        if "USB" in line:
+            m = re.search(r"card\s+(\d+):.*device\s+(\d+):", line)
+            if m:
+                card, device = m.group(1), m.group(2)
+                hw = f"plughw:{card},{device}"
+                print(f"\n  Using ALSA device: {hw}")
+                return hw
 
     # Fallback: try card 1
     print("\n  No USB device parsed, falling back to plughw:1,0")
