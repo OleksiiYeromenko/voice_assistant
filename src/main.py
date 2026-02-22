@@ -87,6 +87,8 @@ def run_llm_with_tools(
 
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
+                if chunk.thinking:
+                    log.debug(f"[think] {chunk.thinking}")
                 text_buffer += chunk.text
                 tool_calls.extend(chunk.tool_calls)
         if text_buffer.strip():

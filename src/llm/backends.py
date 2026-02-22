@@ -25,6 +25,7 @@ class ToolCall:
 class LLMChunk:
     """One piece of a streaming response."""
     text: str = ""
+    thinking: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     done: bool = False
     model: str = ""
@@ -99,8 +100,29 @@ class OllamaBackend:
 
         try:
             response = self._client.chat(**kwargs)
+            in_think = False
             for chunk in response:
                 msg = chunk.get("message", {})
+                content = msg.get("content", "")
+
+                # Filter <think>...</think> blocks from content.
+                # Visible text goes to LLMChunk.text, reasoning to .thinking.
+                visible, thinking = "", ""
+                if "<think>" in content:
+                    in_think = True
+                    visible = content.split("<think>")[0]
+                    content = content.split("<think>", 1)[1]
+                if in_think:
+                    if "</think>" in content:
+                        in_think = False
+                        think_part, after = content.split("</think>", 1)
+                        thinking = think_part
+                        visible += after
+                    else:
+                        thinking = content
+                else:
+                    visible = content
+
                 tool_calls = []
                 if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
@@ -111,7 +133,8 @@ class OllamaBackend:
                         ))
 
                 yield LLMChunk(
-                    text=msg.get("content", ""),
+                    text=visible,
+                    thinking=thinking,
                     tool_calls=tool_calls,
                     done=chunk.get("done", False),
                     model=self.name,

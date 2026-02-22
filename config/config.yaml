@@ -30,6 +30,7 @@ llm:
     num_ctx: 4096            # Context window (keep small for speed)
     think: false             # Disable thinking mode (qwen3 enables it by default)
     system_prompt: |
+      /nothink
       You are a helpful home voice assistant running on a Raspberry Pi.
       Keep responses concise and conversational — they will be spoken aloud.
       Prefer 1-3 sentence answers unless the user asks for detail.
