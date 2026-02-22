@@ -224,7 +224,12 @@ def web_search(query: str) -> str:
         from duckduckgo_search import DDGS
 
     try:
-        results = DDGS(timeout=10).text(query, max_results=3)
+        ddgs = DDGS(timeout=10)
+
+        # Try news first for time-sensitive queries, fall back to general text
+        results = ddgs.text(query, max_results=3, timelimit="m")
+        if not results:
+            results = ddgs.text(query, max_results=3)
 
         if not results:
             return f"No results found for: {query}"
@@ -232,7 +237,7 @@ def web_search(query: str) -> str:
         summaries = []
         for i, r in enumerate(results, 1):
             title = r.get("title", "").strip()[:80]
-            body = r.get("body", "").strip()[:150]
+            body = r.get("body", "").strip()[:200]
             summaries.append(f"[{i}] {title}: {body}")
 
         return "\n".join(summaries)
