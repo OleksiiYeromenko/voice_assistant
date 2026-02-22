@@ -51,7 +51,8 @@ def print_energy(audio: np.ndarray):
 
 
 def record(pa: pyaudio.PyAudio, device_index: int, rate: int, duration_s: float) -> np.ndarray:
-    """Record fixed-duration audio. Returns int16 numpy array."""
+    """Record fixed-duration audio with progress. Returns int16 numpy array."""
+    print(f"  Opening stream: device={device_index}, rate={rate}, chunk={CHUNK}")
     stream = pa.open(
         format=pyaudio.paInt16,
         channels=CHANNELS,
@@ -60,12 +61,37 @@ def record(pa: pyaudio.PyAudio, device_index: int, rate: int, duration_s: float)
         frames_per_buffer=CHUNK,
         input_device_index=device_index,
     )
-    total_chunks = int(rate / CHUNK * duration_s)
+    print("  Stream opened. Reading ...")
+
+    total_samples = int(rate * duration_s)
     frames = []
-    for _ in range(total_chunks):
-        frames.append(stream.read(CHUNK, exception_on_overflow=False))
+    collected = 0
+    last_sec = 0
+    t_start = time.monotonic()
+
+    while collected < total_samples:
+        # Timeout safety: abort after 2x expected duration
+        if time.monotonic() - t_start > duration_s * 2:
+            print(f"\n  TIMEOUT after {time.monotonic() - t_start:.1f}s "
+                  f"(collected {collected}/{total_samples} samples)")
+            break
+
+        data = stream.read(CHUNK, exception_on_overflow=False)
+        frames.append(data)
+        collected += CHUNK
+
+        # Print countdown
+        elapsed = time.monotonic() - t_start
+        sec = int(elapsed)
+        if sec > last_sec:
+            last_sec = sec
+            remaining = max(0, duration_s - elapsed)
+            print(f"  ... {remaining:.0f}s remaining  ({collected} samples)", flush=True)
+
     stream.stop_stream()
     stream.close()
+    elapsed = time.monotonic() - t_start
+    print(f"  Done recording: {elapsed:.1f}s, {collected} samples")
     return np.frombuffer(b"".join(frames), dtype=np.int16)
 
 
@@ -108,7 +134,7 @@ def main():
     # ------------------------------------------------------------------
     print("-" * 60)
     print(f"TEST 1: Record {DURATION_S}s at native rate ({native_rate} Hz)")
-    print("  Speak now!")
+    print("  >>> Speak now! <<<")
     audio_native = record(pa, mic_idx, native_rate, DURATION_S)
     print_energy(audio_native)
     wav1 = OUTPUT_DIR / f"01_native_{native_rate}hz.wav"
@@ -132,7 +158,7 @@ def main():
     print()
     print("-" * 60)
     print(f"TEST 3: Record {DURATION_S}s at 16000 Hz directly (ALSA plughw)")
-    print("  Speak now!")
+    print("  >>> Speak now! <<<")
     try:
         audio_direct = record(pa, mic_idx, 16000, DURATION_S)
         print_energy(audio_direct)
