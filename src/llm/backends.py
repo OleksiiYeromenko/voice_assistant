@@ -101,27 +101,39 @@ class OllamaBackend:
         try:
             response = self._client.chat(**kwargs)
             in_think = False
+            buf = ""
+
             for chunk in response:
                 msg = chunk.get("message", {})
                 content = msg.get("content", "")
+                buf += content
 
-                # Filter <think>...</think> blocks from content.
-                # Visible text goes to LLMChunk.text, reasoning to .thinking.
+                # Buffered state machine: split <think>...</think> from visible text.
+                # Tags may arrive split across chunks, so we buffer and scan.
                 visible, thinking = "", ""
-                if "<think>" in content:
-                    in_think = True
-                    visible = content.split("<think>")[0]
-                    content = content.split("<think>", 1)[1]
-                if in_think:
-                    if "</think>" in content:
-                        in_think = False
-                        think_part, after = content.split("</think>", 1)
-                        thinking = think_part
-                        visible += after
+                while True:
+                    if not in_think:
+                        idx = buf.find("<think>")
+                        if idx == -1:
+                            # No tag — emit all but last 6 chars (partial "<think" guard)
+                            safe = max(0, len(buf) - 6)
+                            visible += buf[:safe]
+                            buf = buf[safe:]
+                            break
+                        visible += buf[:idx]
+                        buf = buf[idx + 7:]  # skip "<think>"
+                        in_think = True
                     else:
-                        thinking = content
-                else:
-                    visible = content
+                        idx = buf.find("</think>")
+                        if idx == -1:
+                            # Still thinking — emit all but last 8 chars (partial guard)
+                            safe = max(0, len(buf) - 8)
+                            thinking += buf[:safe]
+                            buf = buf[safe:]
+                            break
+                        thinking += buf[:idx]
+                        buf = buf[idx + 8:]  # skip "</think>"
+                        in_think = False
 
                 tool_calls = []
                 if msg.get("tool_calls"):
@@ -139,6 +151,14 @@ class OllamaBackend:
                     done=chunk.get("done", False),
                     model=self.name,
                 )
+
+            # Flush remaining buffer after stream ends
+            if buf.strip():
+                if in_think:
+                    yield LLMChunk(thinking=buf, model=self.name)
+                else:
+                    yield LLMChunk(text=buf, model=self.name)
+
         except Exception as e:
             log.error(f"Ollama error: {e}")
             yield LLMChunk(

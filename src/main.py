@@ -25,17 +25,33 @@ MAX_TOOL_ROUNDS = 3
 def build_backends(cfg: dict) -> dict:
     """Create LLM backends from config."""
     backends = {}
+    base_url = cfg["llm"].get("base_url", "http://localhost:11434")
 
-    # Local is always available
+    # Fast local model — always available
     local_cfg = cfg["llm"]["local"]
     backends["local"] = OllamaBackend(
         model=local_cfg["model"],
-        base_url=local_cfg["base_url"],
+        base_url=base_url,
         temperature=local_cfg["temperature"],
         num_ctx=local_cfg["num_ctx"],
         system_prompt=local_cfg["system_prompt"],
         think=local_cfg.get("think", False),
     )
+
+    # Thinking local model — optional
+    try:
+        think_cfg = cfg["llm"]["local_think"]
+        backends["local_think"] = OllamaBackend(
+            model=think_cfg["model"],
+            base_url=base_url,
+            temperature=think_cfg["temperature"],
+            num_ctx=think_cfg["num_ctx"],
+            system_prompt=think_cfg["system_prompt"],
+            think=think_cfg.get("think", True),
+        )
+        log.info(f"Thinking backend available: {think_cfg['model']}")
+    except Exception as e:
+        log.warning(f"Thinking backend not available: {e}")
 
     # Cloud backends — optional, fail gracefully
     try:
