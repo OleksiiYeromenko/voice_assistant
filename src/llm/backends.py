@@ -60,7 +60,6 @@ class OllamaBackend:
         num_ctx: int = 4096,
         system_prompt: str = "",
         think: bool = False,
-        keep_alive: str = "-1",
     ):
         import ollama
         self._client = ollama.Client(host=base_url)
@@ -69,7 +68,6 @@ class OllamaBackend:
         self._num_ctx = num_ctx
         self._system_prompt = system_prompt
         self._think = think
-        self._keep_alive = keep_alive  # "-1" = never unload, "5m" = default
 
     @property
     def name(self) -> str:
@@ -78,17 +76,16 @@ class OllamaBackend:
     def warm(self):
         """Send a minimal request to preload the model into memory.
 
-        Also sets keep_alive on the Ollama server so the model stays loaded
-        between requests (no need to configure OLLAMA_KEEP_ALIVE via systemd).
+        Set OLLAMA_KEEP_ALIVE=-1 in the Ollama systemd service to keep
+        the model loaded between requests.
         """
         try:
-            log.info(f"Warming up {self._model} (keep_alive={self._keep_alive})...")
+            log.info(f"Warming up {self._model}...")
             start = time.perf_counter()
             self._client.chat(
                 model=self._model,
                 messages=[{"role": "user", "content": "hi"}],
                 options={"num_predict": 1, "num_ctx": 32},
-                keep_alive=self._keep_alive,
             )
             elapsed = time.perf_counter() - start
             log.info(f"Model {self._model} warm in {elapsed:.1f}s")
@@ -117,7 +114,6 @@ class OllamaBackend:
                 "num_ctx": self._num_ctx,
             },
             "think": self._think,
-            "keep_alive": self._keep_alive,
         }
         if tools:
             kwargs["tools"] = tools

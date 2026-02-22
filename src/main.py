@@ -41,7 +41,6 @@ def build_backends(cfg: dict) -> dict:
         num_ctx=local_cfg["num_ctx"],
         system_prompt=local_cfg["system_prompt"],
         think=local_cfg.get("think", False),
-        keep_alive=local_cfg.get("keep_alive", "-1"),
     )
 
     # Cloud backends — optional, fail gracefully
