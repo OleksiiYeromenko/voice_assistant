@@ -38,29 +38,47 @@ DURATION_S = 5
 # ---------------------------------------------------------------------------
 def release_audio_devices():
     """Kill any processes that may be holding the audio device."""
-    # Terminate any lingering PyAudio / arecord / aplay processes
+    my_pid = os.getpid()
+
+    # Terminate any lingering arecord / aplay processes
     for proc_name in ("arecord", "aplay"):
         subprocess.run(["killall", "-q", proc_name], capture_output=True)
 
-    # Also kill any python processes that have /dev/snd open,
-    # EXCEPT our own PID
-    my_pid = os.getpid()
+    # Find ALL processes holding any /dev/snd/* device and kill them
     try:
         result = subprocess.run(
-            ["fuser", "/dev/snd/pcmC1D0c"],  # capture device on card 1
-            capture_output=True, text=True,
+            ["fuser", "-v", "/dev/snd/*"],
+            capture_output=True, text=True, shell=False,
+        )
+        # fuser outputs to stderr in verbose mode
+        output = (result.stdout + result.stderr).strip()
+        if output:
+            print(f"  Processes using /dev/snd:\n    {output}")
+    except Exception:
+        pass
+
+    try:
+        # Non-verbose just to get PIDs
+        result = subprocess.run(
+            "fuser /dev/snd/* 2>/dev/null",
+            capture_output=True, text=True, shell=True,
         )
         if result.stdout.strip():
             pids = result.stdout.strip().split()
             for pid_str in pids:
-                pid = int(pid_str.strip().rstrip("m"))
-                if pid != my_pid:
+                pid = int(pid_str.strip().rstrip("mec"))
+                if pid != my_pid and pid != os.getppid():
                     print(f"  Killing PID {pid} holding audio device")
-                    os.kill(pid, signal.SIGTERM)
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
     except Exception:
-        pass  # fuser not available or no processes
+        pass
 
-    time.sleep(0.5)  # let devices settle
+    # Give ALSA time to fully release and re-enumerate devices
+    print("  Waiting for devices to settle ...")
+    time.sleep(2)
 
 
 # ---------------------------------------------------------------------------
@@ -174,17 +192,36 @@ def main():
     print("\nReleasing audio devices ...")
     release_audio_devices()
 
-    # Fresh PyAudio instance after cleanup
-    pa = pyaudio.PyAudio()
-    list_devices(pa)
+    # Fresh PyAudio instance after cleanup — retry a few times since ALSA
+    # may need time to re-enumerate after killing processes
+    pa = None
+    mic_idx = None
+    native_rate = None
 
-    try:
-        mic_idx, native_rate = find_mic(pa)
-    except RuntimeError as e:
-        print(f"\nFATAL: {e}")
-        print("Check that your USB mic is plugged in. Run: arecord -l")
-        pa.terminate()
-        sys.exit(1)
+    for attempt in range(3):
+        if pa is not None:
+            pa.terminate()
+        pa = pyaudio.PyAudio()
+
+        if attempt > 0:
+            print(f"\n  Retry {attempt + 1}/3 ...")
+
+        list_devices(pa)
+
+        try:
+            mic_idx, native_rate = find_mic(pa)
+            break  # success
+        except RuntimeError:
+            if attempt < 2:
+                print("  No mic found, waiting and retrying ...")
+                pa.terminate()
+                pa = None
+                time.sleep(2)
+            else:
+                print(f"\nFATAL: No microphone found after 3 attempts.")
+                print("Check that your USB mic is plugged in. Run: arecord -l")
+                pa.terminate()
+                sys.exit(1)
 
     print(f"\nMic: index={mic_idx}, native rate={native_rate} Hz\n")
 
