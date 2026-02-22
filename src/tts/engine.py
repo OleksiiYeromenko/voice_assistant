@@ -1,7 +1,7 @@
 """Streaming TTS using Piper — synthesize per-sentence, play immediately.
 
 Key idea: as the LLM streams tokens, we buffer until we hit a sentence boundary
-(.!?;), then synthesize that sentence with Piper and play it via aplay.
+(sentence-ending punctuation), then synthesize that sentence with Piper and play it via aplay.
 This means the user hears audio while the LLM is still generating.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 OUTPUT_DIR = Path("./tts_output")
-SENTENCE_RE = re.compile(r'[.!?;]\s*')
+SENTENCE_RE = re.compile(r'\.(?!\d)\s+|[!?;]\s+')
 
 
 class TTSEngine:
@@ -55,13 +55,23 @@ class TTSEngine:
         return output_path, synth_time, audio_duration
 
     def play(self, path: str):
-        """Play WAV via aplay."""
+        """Play WAV via aplay (blocking)."""
         result = subprocess.run(
             ["aplay", "-D", self.aplay_device, path],
             capture_output=True,
         )
         if result.returncode != 0:
             log.error(f"Playback error: {result.stderr.decode().strip()}")
+
+    def _wait_for_playback(self, proc: subprocess.Popen | None):
+        """Wait for a non-blocking playback process to finish and log errors."""
+        if proc is None:
+            return
+        proc.wait()
+        if proc.returncode != 0:
+            stderr = proc.stderr.read().decode().strip() if proc.stderr else ""
+            if stderr:
+                log.error(f"Playback error: {stderr}")
 
     def speak(self, text: str):
         """Synthesize and play a complete text."""
@@ -73,40 +83,55 @@ class TTSEngine:
 
     def stream_speak(self, token_stream: Generator[str, None, None]) -> Generator[str, None, None]:
         """Consume a token stream, buffer sentences, and speak each one as soon as ready.
-        
-        Yields the full text for display/logging purposes.
-        
+
+        Playback is non-blocking: while sentence N plays via aplay, we continue
+        consuming tokens and synthesizing sentence N+1, eliminating gaps.
+
+        Yields each token for display/logging purposes.
+
         Usage:
             for text in tts.stream_speak(llm_token_generator):
                 print(text, end="", flush=True)
         """
         buffer = ""
-        full_text = ""
+        play_proc: subprocess.Popen | None = None
 
         for token in token_stream:
             buffer += token
-            full_text += token
             yield token  # Pass through for display
 
             # Check for sentence boundary
             sentences = SENTENCE_RE.split(buffer)
             if len(sentences) > 1:
-                # Everything before the last split is complete sentences
-                # Find the actual split point
                 match = list(SENTENCE_RE.finditer(buffer))
                 if match:
                     last_match = match[-1]
                     complete = buffer[: last_match.end()].strip()
-                    buffer = buffer[last_match.end() :]
+                    buffer = buffer[last_match.end():]
 
                     if complete:
                         log.debug(f"TTS sentence: '{complete}'")
                         path, synth_time, duration = self.synthesize(complete)
-                        self.play(path)
+
+                        # Wait for previous playback, then start new one (non-blocking)
+                        self._wait_for_playback(play_proc)
+                        play_proc = subprocess.Popen(
+                            ["aplay", "-D", self.aplay_device, path],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE,
+                        )
 
         # Speak any remaining text in buffer
         remaining = buffer.strip()
         if remaining:
             log.debug(f"TTS remainder: '{remaining}'")
             path, _, _ = self.synthesize(remaining)
-            self.play(path)
+            self._wait_for_playback(play_proc)
+            play_proc = subprocess.Popen(
+                ["aplay", "-D", self.aplay_device, path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+
+        # Wait for final playback to complete before returning
+        self._wait_for_playback(play_proc)
