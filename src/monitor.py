@@ -21,21 +21,30 @@ class LatencyRecord:
     total_ms: float = 0.0
     model_used: str = ""
 
+    @staticmethod
+    def _fmt(ms: float) -> str:
+        """Format milliseconds as human-readable duration."""
+        if ms < 1000:
+            return f"{ms:.0f}ms"
+        return f"{ms / 1000:.1f}s"
+
     def summary(self) -> str:
-        parts = []
+        stages = []
         if self.stt_ms:
-            parts.append(f"stt={self.stt_ms:.0f}ms")
+            stages.append(f"STT {self._fmt(self.stt_ms)}")
         if self.llm_ms:
-            parts.append(f"llm={self.llm_ms:.0f}ms")
-        if self.llm_first_token_ms:
-            parts.append(f"llm_ttft={self.llm_first_token_ms:.0f}ms")
+            ttft = f" (ttft {self._fmt(self.llm_first_token_ms)})" if self.llm_first_token_ms else ""
+            stages.append(f"LLM {self._fmt(self.llm_ms)}{ttft}")
         if self.tts_first_chunk_ms:
-            parts.append(f"tts_first={self.tts_first_chunk_ms:.0f}ms")
+            stages.append(f"TTS {self._fmt(self.tts_first_chunk_ms)}")
+        pipeline = " → ".join(stages)
+        tail = []
         if self.total_ms:
-            parts.append(f"total={self.total_ms:.0f}ms")
+            tail.append(f"total {self._fmt(self.total_ms)}")
         if self.model_used:
-            parts.append(f"model={self.model_used}")
-        return " | ".join(parts)
+            tail.append(self.model_used)
+        suffix = " │ ".join(tail)
+        return f"{pipeline} │ {suffix}" if suffix else pipeline
 
 
 @dataclass

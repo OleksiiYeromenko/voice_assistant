@@ -57,6 +57,7 @@ class OllamaBackend:
         temperature: float = 0.7,
         num_ctx: int = 4096,
         system_prompt: str = "",
+        think: bool = False,
     ):
         import ollama
         self._client = ollama.Client(host=base_url)
@@ -64,6 +65,7 @@ class OllamaBackend:
         self._temperature = temperature
         self._num_ctx = num_ctx
         self._system_prompt = system_prompt
+        self._think = think
 
     @property
     def name(self) -> str:
@@ -90,6 +92,7 @@ class OllamaBackend:
                 "temperature": self._temperature,
                 "num_ctx": self._num_ctx,
             },
+            "think": self._think,
         }
         if tools:
             kwargs["tools"] = tools

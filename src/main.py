@@ -34,6 +34,7 @@ def build_backends(cfg: dict) -> dict:
         temperature=local_cfg["temperature"],
         num_ctx=local_cfg["num_ctx"],
         system_prompt=local_cfg["system_prompt"],
+        think=local_cfg.get("think", False),
     )
 
     # Cloud backends — optional, fail gracefully
@@ -82,9 +83,14 @@ def run_llm_with_tools(
                 if first_token and chunk.text:
                     latency.llm_first_token_ms = llm_timer.mark()
                     first_token = False
+                    print("\n🤖 ", end="", flush=True)
 
+                if chunk.text:
+                    print(chunk.text, end="", flush=True)
                 text_buffer += chunk.text
                 tool_calls.extend(chunk.tool_calls)
+        if text_buffer.strip():
+            print()  # newline after streaming
 
         latency.llm_ms += llm_timer.elapsed_ms
         latency.model_used = backend.name

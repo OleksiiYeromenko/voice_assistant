@@ -28,6 +28,7 @@ llm:
     base_url: "http://localhost:11434"
     temperature: 0.7
     num_ctx: 4096            # Context window (keep small for speed)
+    think: false             # Disable thinking mode (qwen3 enables it by default)
     system_prompt: |
       You are a helpful home voice assistant running on a Raspberry Pi.
       Keep responses concise and conversational — they will be spoken aloud.
