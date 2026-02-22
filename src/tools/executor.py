@@ -38,14 +38,18 @@ WEB_SEARCH_TOOL = {
     "type": "function",
     "function": {
         "name": "web_search",
-        "description": "Search the web for current events, news, or real-time information. Only use this for factual queries that require up-to-date data. Do NOT use for creative tasks, general knowledge, or things you can answer directly.",
+        "description": (
+            "Search the web for current information. Use for: current prices, "
+            "live data, recent news, sports scores, stock prices, or any factual "
+            "question requiring up-to-date information."
+        ),
         "parameters": {
             "type": "object",
             "required": ["query"],
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search query",
+                    "description": "Search query — be specific, e.g. 'gold price per ounce today'",
                 },
             },
         },
@@ -146,23 +150,26 @@ def get_weather(city: str) -> str:
 
 
 def web_search(query: str) -> str:
-    """Web search via DuckDuckGo. Returns top 3 results."""
-    from duckduckgo_search import DDGS
+    """Web search via ddgs (multi-engine). Returns top 5 results."""
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        from duckduckgo_search import DDGS
 
     try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=3))
+        results = DDGS(timeout=10).text(query, max_results=5)
 
         if not results:
             return f"No results found for: {query}"
 
         summaries = []
-        for r in results:
-            title = r.get("title", "")
-            body = r.get("body", "")
-            summaries.append(f"{title}: {body}"[:200])
+        for i, r in enumerate(results, 1):
+            title = r.get("title", "").strip()
+            body = r.get("body", "").strip()
+            href = r.get("href", "")
+            summaries.append(f"[{i}] {title} — {body} ({href})")
 
-        return " | ".join(summaries)
+        return "\n".join(summaries)
     except Exception as e:
         log.error(f"Search error: {e}")
         return f"Search failed: {e}"

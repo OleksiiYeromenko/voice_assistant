@@ -130,18 +130,22 @@ class TTSEngine:
         if proc is None:
             return True
 
-        while proc.poll() is None:
-            if self._interrupted:
-                proc.terminate()
-                proc.wait()
-                return False
-            time.sleep(poll_interval)
+        try:
+            while proc.poll() is None:
+                if self._interrupted:
+                    proc.terminate()
+                    proc.wait()
+                    return False
+                time.sleep(poll_interval)
 
-        if proc.returncode != 0:
-            stderr = proc.stderr.read().decode().strip() if proc.stderr else ""
-            if stderr:
-                log.error(f"Playback error: {stderr}")
-        return True
+            if proc.returncode != 0:
+                stderr = proc.stderr.read().decode().strip() if proc.stderr else ""
+                if stderr:
+                    log.error(f"Playback error: {stderr}")
+            return True
+        finally:
+            if proc.stderr:
+                proc.stderr.close()
 
     def speak(self, text: str):
         """Synthesize and play a complete text."""
