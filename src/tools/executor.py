@@ -217,24 +217,23 @@ def get_time(location: str = "") -> str:
 
 
 def web_search(query: str) -> str:
-    """Web search via ddgs (multi-engine). Returns top 5 results."""
+    """Web search via ddgs (multi-engine). Returns top 3 results, truncated for LLM context."""
     try:
         from ddgs import DDGS
     except ImportError:
         from duckduckgo_search import DDGS
 
     try:
-        results = DDGS(timeout=10).text(query, max_results=5)
+        results = DDGS(timeout=10).text(query, max_results=3)
 
         if not results:
             return f"No results found for: {query}"
 
         summaries = []
         for i, r in enumerate(results, 1):
-            title = r.get("title", "").strip()
-            body = r.get("body", "").strip()
-            href = r.get("href", "")
-            summaries.append(f"[{i}] {title} — {body} ({href})")
+            title = r.get("title", "").strip()[:80]
+            body = r.get("body", "").strip()[:150]
+            summaries.append(f"[{i}] {title}: {body}")
 
         return "\n".join(summaries)
     except Exception as e:
