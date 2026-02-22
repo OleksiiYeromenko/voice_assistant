@@ -56,6 +56,30 @@ WEB_SEARCH_TOOL = {
     },
 }
 
+TIME_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_time",
+        "description": (
+            "Get the current date and time. Use when the user asks 'what time is it', "
+            "'what's the date', or asks about the time in another city/timezone."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": [],
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": (
+                        "Optional city or timezone. Leave empty for local time. "
+                        "Examples: 'London', 'Tokyo', 'New York', 'America/Chicago'"
+                    ),
+                },
+            },
+        },
+    },
+}
+
 SHOPPING_LIST_TOOL = {
     "type": "function",
     "function": {
@@ -99,7 +123,7 @@ REMEMBER_TOOL = {
 
 
 # All available tool schemas
-ALL_TOOLS = [WEATHER_TOOL, WEB_SEARCH_TOOL, SHOPPING_LIST_TOOL, REMEMBER_TOOL]
+ALL_TOOLS = [WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL, SHOPPING_LIST_TOOL, REMEMBER_TOOL]
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +171,49 @@ def get_weather(city: str) -> str:
     except Exception as e:
         log.error(f"Weather error: {e}")
         return f"Weather lookup failed: {e}"
+
+
+def get_time(location: str = "") -> str:
+    """Get current date/time locally or for a given city/timezone."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    if not location or not location.strip():
+        now = datetime.now()
+        return now.strftime("Local time: %A, %B %d, %Y — %I:%M %p")
+
+    # Try as IANA timezone first (e.g. "America/New_York")
+    try:
+        tz = ZoneInfo(location.strip())
+        now = datetime.now(tz)
+        return now.strftime(f"{location}: %A, %B %d, %Y — %I:%M %p")
+    except (KeyError, ValueError):
+        pass
+
+    # Fall back to geocoding (same API as weather) to resolve city → timezone
+    import httpx
+    try:
+        geo = httpx.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": location.strip(), "count": 1},
+            timeout=5,
+        ).json()
+
+        if not geo.get("results"):
+            return f"Could not find location: {location}"
+
+        tz_name = geo["results"][0].get("timezone", "")
+        city_name = geo["results"][0].get("name", location)
+
+        if not tz_name:
+            return f"No timezone data for: {location}"
+
+        tz = ZoneInfo(tz_name)
+        now = datetime.now(tz)
+        return now.strftime(f"{city_name} ({tz_name}): %A, %B %d, %Y — %I:%M %p")
+    except Exception as e:
+        log.error(f"Time lookup error: {e}")
+        return f"Time lookup failed: {e}"
 
 
 def web_search(query: str) -> str:
@@ -198,6 +265,7 @@ def add_to_shopping_list(item: str) -> str:
 
 _TOOL_FUNCTIONS: dict[str, callable] = {
     "get_weather": get_weather,
+    "get_time": get_time,
     "web_search": web_search,
     "add_to_shopping_list": add_to_shopping_list,
 }

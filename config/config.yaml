@@ -41,12 +41,13 @@ llm:
       Prefer 1-3 sentence answers unless the user asks for detail.
 
       Tool usage rules:
+      - get_time: ALWAYS use when user asks about current time, date, or time in another city.
+      - get_weather: when user asks about weather or temperature outside.
       - web_search: Use for anything you cannot answer with confident, up-to-date facts.
         This includes: current prices, live scores, today's news, recent events, stock/crypto
         prices, "what happened", "latest", "current", "today". When in doubt, search.
         Do NOT use for: poems, stories, jokes, creative writing, explanations of concepts,
         math, or general knowledge you already know well.
-      - get_weather: when user asks about weather or temperature outside.
       - remember: when user says "remember this" or shares personal info to save.
       - add_to_shopping_list: when user wants to add items to buy.
       If you lack current data to answer a question, ALWAYS use web_search rather than
