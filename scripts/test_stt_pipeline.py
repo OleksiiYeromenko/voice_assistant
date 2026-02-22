@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """STT pipeline diagnostic — record WAVs at different sample rates and transcribe.
 
+Uses arecord directly (bypasses PyAudio/PortAudio) since PortAudio often fails
+to enumerate ALSA devices on Raspberry Pi after process cleanup.
+
 Saves WAV files to stt_output/ so you can listen and compare quality.
 Runs three tests:
-  1. Record at mic's native rate (e.g. 44100 Hz), save WAV
-  2. Resample that recording to 16 kHz, save WAV, transcribe (VAD on + off)
-  3. Record at 16 kHz directly from mic (ALSA plughw), save WAV, transcribe
+  1. Record at native rate (44100 Hz) via arecord, save WAV
+  2. Resample that recording to 16 kHz (scipy), save WAV, transcribe
+  3. Record at 16 kHz directly via arecord (ALSA plughw resampling), transcribe
 
 Usage:
   uv run scripts/test_stt_pipeline.py
 """
 
-import os
-import signal
 import subprocess
 import sys
 import time
@@ -20,97 +21,73 @@ import wave
 from pathlib import Path
 
 import numpy as np
-import pyaudio
 
 sys.path.insert(0, ".")
-from src.audio import find_mic, resample
+from src.audio import resample
 
 OUTPUT_DIR = Path("stt_output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-CHANNELS = 1
-CHUNK = 1024
 DURATION_S = 5
-
-
-# ---------------------------------------------------------------------------
-# Cleanup: kill processes that hold the audio device
-# ---------------------------------------------------------------------------
-def release_audio_devices():
-    """Kill any processes that may be holding the audio device."""
-    my_pid = os.getpid()
-
-    # Terminate any lingering arecord / aplay processes
-    for proc_name in ("arecord", "aplay"):
-        subprocess.run(["killall", "-q", proc_name], capture_output=True)
-
-    # Find ALL processes holding any /dev/snd/* device and kill them
-    try:
-        result = subprocess.run(
-            ["fuser", "-v", "/dev/snd/*"],
-            capture_output=True, text=True, shell=False,
-        )
-        # fuser outputs to stderr in verbose mode
-        output = (result.stdout + result.stderr).strip()
-        if output:
-            print(f"  Processes using /dev/snd:\n    {output}")
-    except Exception:
-        pass
-
-    try:
-        # Non-verbose just to get PIDs
-        result = subprocess.run(
-            "fuser /dev/snd/* 2>/dev/null",
-            capture_output=True, text=True, shell=True,
-        )
-        if result.stdout.strip():
-            pids = result.stdout.strip().split()
-            for pid_str in pids:
-                pid = int(pid_str.strip().rstrip("mec"))
-                if pid != my_pid and pid != os.getppid():
-                    print(f"  Killing PID {pid} holding audio device")
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-    except Exception:
-        pass
-
-    # Give ALSA time to fully release and re-enumerate devices
-    print("  Waiting for devices to settle ...")
-    time.sleep(2)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def list_devices(pa: pyaudio.PyAudio):
-    """Print all input devices so we can see what's available."""
-    print("  Available input devices:")
-    found_any = False
-    for i in range(pa.get_device_count()):
-        try:
-            info = pa.get_device_info_by_index(i)
-            if info["maxInputChannels"] > 0:
-                found_any = True
-                name = info["name"]
-                rate = int(info["defaultSampleRate"])
-                usb = " [USB]" if "usb" in name.lower() else ""
-                print(f"    index={i}  rate={rate}  name='{name}'{usb}")
-        except Exception:
-            continue
-    if not found_any:
-        print("    (none found!)")
+def find_alsa_capture_device() -> str:
+    """Find the USB capture device using arecord -l. Returns ALSA hw string."""
+    result = subprocess.run(["arecord", "-l"], capture_output=True, text=True)
+    print("  arecord -l output:")
+    for line in result.stdout.strip().splitlines():
+        print(f"    {line}")
+
+    # Parse "card N: ... device M: ..."
+    for line in result.stdout.splitlines():
+        if "USB" in line and "card" in line:
+            parts = line.split(":")
+            card = parts[0].split()[-1]  # card N
+            device = parts[1].split(",")[0].strip().split()[-1]  # device M
+            hw = f"plughw:{card},{device}"
+            print(f"\n  Using ALSA device: {hw}")
+            return hw
+
+    # Fallback: try card 1
+    print("\n  No USB device parsed, falling back to plughw:1,0")
+    return "plughw:1,0"
 
 
-def save_wav(path: Path, audio: np.ndarray, rate: int):
-    """Write int16 numpy array to WAV file."""
-    with wave.open(str(path), "wb") as wf:
-        wf.setnchannels(CHANNELS)
-        wf.setsampwidth(2)  # int16 = 2 bytes
-        wf.setframerate(rate)
-        wf.writeframes(audio.tobytes())
-    print(f"  Saved: {path}  ({len(audio) / rate:.1f}s, {rate} Hz)")
+def record_arecord(device: str, rate: int, duration_s: int, output_path: Path) -> np.ndarray:
+    """Record using arecord. Returns int16 numpy array."""
+    cmd = [
+        "arecord",
+        "-D", device,
+        "-f", "S16_LE",
+        "-c", "1",
+        "-r", str(rate),
+        "-d", str(duration_s),
+        "-t", "wav",
+        str(output_path),
+    ]
+    print(f"  Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration_s + 5)
+
+    if result.returncode != 0:
+        print(f"  arecord stderr: {result.stderr.strip()}")
+        raise RuntimeError(f"arecord failed: {result.stderr.strip()}")
+
+    if result.stderr.strip():
+        # arecord prints info to stderr even on success
+        for line in result.stderr.strip().splitlines():
+            print(f"    {line}")
+
+    # Read back the WAV
+    with wave.open(str(output_path), "rb") as wf:
+        n_frames = wf.getnframes()
+        actual_rate = wf.getframerate()
+        raw = wf.readframes(n_frames)
+    audio = np.frombuffer(raw, dtype=np.int16)
+    print(f"  Recorded: {len(audio)} samples, {len(audio)/actual_rate:.1f}s at {actual_rate} Hz")
+    return audio
 
 
 def print_energy(audio: np.ndarray):
@@ -120,49 +97,14 @@ def print_energy(audio: np.ndarray):
           f"samples: {len(audio)}")
 
 
-def record(pa: pyaudio.PyAudio, device_index: int, rate: int, duration_s: float) -> np.ndarray:
-    """Record fixed-duration audio with progress. Returns int16 numpy array."""
-    print(f"  Opening stream: device={device_index}, rate={rate}, chunk={CHUNK}")
-    stream = pa.open(
-        format=pyaudio.paInt16,
-        channels=CHANNELS,
-        rate=rate,
-        input=True,
-        frames_per_buffer=CHUNK,
-        input_device_index=device_index,
-    )
-    print("  Stream opened. Reading ...")
-
-    total_samples = int(rate * duration_s)
-    frames = []
-    collected = 0
-    last_sec = -1
-    t_start = time.monotonic()
-
-    while collected < total_samples:
-        # Timeout safety: abort after 2x expected duration
-        if time.monotonic() - t_start > duration_s * 2:
-            print(f"\n  TIMEOUT after {time.monotonic() - t_start:.1f}s "
-                  f"(collected {collected}/{total_samples} samples)")
-            break
-
-        data = stream.read(CHUNK, exception_on_overflow=False)
-        frames.append(data)
-        collected += CHUNK
-
-        # Print countdown every second
-        elapsed = time.monotonic() - t_start
-        sec = int(elapsed)
-        if sec > last_sec:
-            last_sec = sec
-            remaining = max(0, duration_s - elapsed)
-            print(f"    {sec}s / {duration_s}s ...", flush=True)
-
-    stream.stop_stream()
-    stream.close()
-    elapsed = time.monotonic() - t_start
-    print(f"  Done recording: {elapsed:.1f}s, {collected} samples")
-    return np.frombuffer(b"".join(frames), dtype=np.int16)
+def save_wav(path: Path, audio: np.ndarray, rate: int):
+    """Write int16 numpy array to WAV file."""
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(audio.tobytes())
+    print(f"  Saved: {path}  ({len(audio) / rate:.1f}s, {rate} Hz)")
 
 
 def transcribe(audio_16k: np.ndarray, model, label: str):
@@ -185,62 +127,35 @@ def transcribe(audio_16k: np.ndarray, model, label: str):
 # ---------------------------------------------------------------------------
 def main():
     print("=" * 60)
-    print("STT Pipeline Diagnostic")
+    print("STT Pipeline Diagnostic (using arecord)")
     print("=" * 60)
 
-    # Step 0: Release any held audio devices
-    print("\nReleasing audio devices ...")
-    release_audio_devices()
+    # Kill any lingering audio processes
+    print("\nCleaning up ...")
+    for proc in ("arecord", "aplay"):
+        subprocess.run(["killall", "-q", proc], capture_output=True)
+    time.sleep(0.5)
 
-    # Fresh PyAudio instance after cleanup — retry a few times since ALSA
-    # may need time to re-enumerate after killing processes
-    pa = None
-    mic_idx = None
-    native_rate = None
-
-    for attempt in range(3):
-        if pa is not None:
-            pa.terminate()
-        pa = pyaudio.PyAudio()
-
-        if attempt > 0:
-            print(f"\n  Retry {attempt + 1}/3 ...")
-
-        list_devices(pa)
-
-        try:
-            mic_idx, native_rate = find_mic(pa)
-            break  # success
-        except RuntimeError:
-            if attempt < 2:
-                print("  No mic found, waiting and retrying ...")
-                pa.terminate()
-                pa = None
-                time.sleep(2)
-            else:
-                print(f"\nFATAL: No microphone found after 3 attempts.")
-                print("Check that your USB mic is plugged in. Run: arecord -l")
-                pa.terminate()
-                sys.exit(1)
-
-    print(f"\nMic: index={mic_idx}, native rate={native_rate} Hz\n")
+    # Find ALSA device
+    print()
+    device = find_alsa_capture_device()
 
     # Load Whisper once
-    print("Loading Whisper model (base.en) ...")
+    print("\nLoading Whisper model (base.en) ...")
     from faster_whisper import WhisperModel
     model = WhisperModel("base.en", device="cpu", compute_type="int8", cpu_threads=4)
     print("Model ready.\n")
 
     # ------------------------------------------------------------------
-    # Test 1: Record at native rate
+    # Test 1: Record at 44100 Hz (native)
     # ------------------------------------------------------------------
     print("-" * 60)
-    print(f"TEST 1: Record {DURATION_S}s at native rate ({native_rate} Hz)")
+    native_rate = 44100
+    print(f"TEST 1: Record {DURATION_S}s at {native_rate} Hz (native rate)")
     print("  >>> Speak now! <<<")
-    audio_native = record(pa, mic_idx, native_rate, DURATION_S)
-    print_energy(audio_native)
     wav1 = OUTPUT_DIR / f"01_native_{native_rate}hz.wav"
-    save_wav(wav1, audio_native, native_rate)
+    audio_native = record_arecord(device, native_rate, DURATION_S, wav1)
+    print_energy(audio_native)
 
     # ------------------------------------------------------------------
     # Test 2: Resample to 16 kHz, transcribe
@@ -255,23 +170,19 @@ def main():
     transcribe(audio_resampled, model, "resampled")
 
     # ------------------------------------------------------------------
-    # Test 3: Record at 16 kHz directly
+    # Test 3: Record at 16 kHz directly (ALSA plughw does the resampling)
     # ------------------------------------------------------------------
     print()
     print("-" * 60)
-    print(f"TEST 3: Record {DURATION_S}s at 16000 Hz directly (ALSA plughw)")
+    print(f"TEST 3: Record {DURATION_S}s at 16000 Hz directly (ALSA plughw resamples)")
     print("  >>> Speak now! <<<")
     try:
-        audio_direct = record(pa, mic_idx, 16000, DURATION_S)
-        print_energy(audio_direct)
         wav3 = OUTPUT_DIR / "03_direct_16khz.wav"
-        save_wav(wav3, audio_direct, 16000)
+        audio_direct = record_arecord(device, 16000, DURATION_S, wav3)
+        print_energy(audio_direct)
         transcribe(audio_direct, model, "direct 16k")
     except Exception as e:
-        print(f"  FAILED to open/record at 16 kHz: {e}")
-        print("  This mic may not support 16 kHz directly.")
-
-    pa.terminate()
+        print(f"  FAILED: {e}")
 
     # ------------------------------------------------------------------
     # Summary
