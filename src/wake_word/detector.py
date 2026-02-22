@@ -10,6 +10,7 @@ afterwards so that the ALSA device is free for the STT engine to record.
 
 import logging
 import subprocess
+import threading
 from collections.abc import Generator
 
 import numpy as np
@@ -22,6 +23,18 @@ RATE = 16000
 CHANNELS = 1
 CHUNK_SAMPLES = 1280  # 80 ms at 16 kHz — openWakeWord's native frame size
 CHUNK_BYTES = CHUNK_SAMPLES * 2  # int16 = 2 bytes per sample
+
+
+def _kill_proc(proc: subprocess.Popen):
+    """Terminate a subprocess and close its stdout to avoid ResourceWarnings."""
+    try:
+        if proc.stdout:
+            proc.stdout.close()
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=2)
+    except Exception:
+        pass
 
 
 class WakeWordDetector:
@@ -47,12 +60,21 @@ class WakeWordDetector:
         if self._alsa_device is None:
             self._alsa_device = find_alsa_device()
 
-    def detect_once(self, timeout_s: float = 120.0) -> bool:
+    def detect_once(
+        self,
+        timeout_s: float = 120.0,
+        stop_event: threading.Event | None = None,
+    ) -> bool:
         """Listen for a single wake word detection. Returns True if detected.
 
         Unlike :meth:`listen`, this blocks until detection or timeout and does
         NOT yield.  Designed for use in a background thread during TTS playback
         to enable interruption.
+
+        Args:
+            timeout_s: Maximum seconds to listen before giving up.
+            stop_event: If set by the caller, the method stops and returns False.
+                        Checked every 80 ms (one audio chunk).
         """
         import time
 
@@ -75,6 +97,10 @@ class WakeWordDetector:
 
         try:
             while time.perf_counter() - start < timeout_s:
+                # Check if caller wants us to stop (every 80 ms)
+                if stop_event and stop_event.is_set():
+                    return False
+
                 data = proc.stdout.read(CHUNK_BYTES)
                 if not data or len(data) < CHUNK_BYTES:
                     break
@@ -89,9 +115,7 @@ class WakeWordDetector:
                         return True
             return False
         finally:
-            if proc.poll() is None:
-                proc.terminate()
-                proc.wait()
+            _kill_proc(proc)
 
     def listen(self) -> Generator[float, None, None]:
         """Block and yield confidence score each time wake word is detected.
@@ -139,8 +163,7 @@ class WakeWordDetector:
                             if score >= self.threshold:
                                 log.info(f"Wake word '{model_name}': {score:.3f}")
                                 # Stop arecord BEFORE yielding so STT can use the device
-                                proc.terminate()
-                                proc.wait()
+                                _kill_proc(proc)
                                 self.oww.reset()
                                 yield score
                                 # After yield returns, break inner loop
@@ -152,10 +175,7 @@ class WakeWordDetector:
                         # Wake word fired (inner for-loop hit break) — exit inner while
                         break
                 finally:
-                    # Ensure cleanup if inner loop exits unexpectedly
-                    if proc.poll() is None:
-                        proc.terminate()
-                        proc.wait()
+                    _kill_proc(proc)
 
         except KeyboardInterrupt:
             log.info("Wake word listener stopped.")

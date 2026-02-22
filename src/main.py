@@ -41,6 +41,7 @@ def build_backends(cfg: dict) -> dict:
         num_ctx=local_cfg["num_ctx"],
         system_prompt=local_cfg["system_prompt"],
         think=local_cfg.get("think", False),
+        keep_alive=local_cfg.get("keep_alive", "-1"),
     )
 
     # Cloud backends — optional, fail gracefully
@@ -170,14 +171,20 @@ def run_streaming_llm(
 # ---------------------------------------------------------------------------
 # TTS interruption via background wake word detection
 # ---------------------------------------------------------------------------
-def _start_interrupt_listener(wake_detector, tts) -> threading.Thread | None:
-    """Spawn a background thread that listens for wake word and interrupts TTS."""
+def _start_interrupt_listener(wake_detector, tts):
+    """Spawn a background thread that listens for wake word and interrupts TTS.
+
+    Returns (thread, stop_event) so the caller can stop the listener
+    before the main wake-word loop resumes (avoiding ALSA device conflicts).
+    """
     if wake_detector is None:
-        return None
+        return None, None
+
+    stop_event = threading.Event()
 
     def _listen():
         try:
-            if wake_detector.detect_once(timeout_s=120):
+            if wake_detector.detect_once(timeout_s=120, stop_event=stop_event):
                 log.info("Wake word detected during TTS — interrupting")
                 tts.interrupt()
         except Exception as e:
@@ -185,7 +192,15 @@ def _start_interrupt_listener(wake_detector, tts) -> threading.Thread | None:
 
     t = threading.Thread(target=_listen, daemon=True, name="interrupt-listener")
     t.start()
-    return t
+    return t, stop_event
+
+
+def _stop_interrupt_listener(thread, stop_event):
+    """Signal the interrupt listener to stop and wait for it to release the mic."""
+    if thread is None:
+        return
+    stop_event.set()
+    thread.join(timeout=2)  # 2s max — detect_once checks stop_event every 80ms
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +399,7 @@ def _handle_interaction(
 
     # 4. Start interrupt listener (background wake word detection during TTS)
     #    Started AFTER STT so mic is free.
-    interrupt_thread = _start_interrupt_listener(wake_detector, tts)
+    interrupt_thread, interrupt_stop = _start_interrupt_listener(wake_detector, tts)
 
     # 5. LLM + Tools + TTS
     try:
@@ -411,6 +426,10 @@ def _handle_interaction(
         else:
             response = "Sorry, I'm having trouble right now."
             tts.speak(response)
+    finally:
+        # CRITICAL: Stop interrupt listener BEFORE returning so its arecord
+        # releases the mic. Otherwise listen() can't reopen the device.
+        _stop_interrupt_listener(interrupt_thread, interrupt_stop)
 
     conversation.append({"role": "assistant", "content": response})
 

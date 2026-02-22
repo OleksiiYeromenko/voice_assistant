@@ -38,7 +38,7 @@ WEB_SEARCH_TOOL = {
     "type": "function",
     "function": {
         "name": "web_search",
-        "description": "Search the web for current information. Use this when you need facts you don't know.",
+        "description": "Search the web for current events, news, or real-time information. Only use this for factual queries that require up-to-date data. Do NOT use for creative tasks, general knowledge, or things you can answer directly.",
         "parameters": {
             "type": "object",
             "required": ["query"],
