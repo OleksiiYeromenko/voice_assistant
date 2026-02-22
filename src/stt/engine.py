@@ -1,32 +1,20 @@
 """Speech-to-Text using faster-whisper.
 
 Records audio after wake word, detects silence to stop, then transcribes.
+Handles USB microphones that only support 44100 Hz by resampling to 16 kHz.
 """
 
-import ctypes
 import logging
 import time
-import wave
-from pathlib import Path
 
 import numpy as np
 import pyaudio
 
+from src.audio import find_mic, resample
+
 log = logging.getLogger(__name__)
 
-# Silence ALSA warnings
-_ERROR_HANDLER = ctypes.CFUNCTYPE(
-    None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p
-)
-def _py_error_handler(*_): pass
-_c_error_handler = _ERROR_HANDLER(_py_error_handler)
-try:
-    _asound = ctypes.cdll.LoadLibrary("libasound.so")
-    _asound.snd_lib_error_set_handler(_c_error_handler)
-except OSError:
-    pass
-
-SAMPLE_RATE = 16000
+TARGET_RATE = 16000  # Whisper expects 16 kHz
 CHANNELS = 1
 CHUNK_SAMPLES = 1024
 
@@ -47,10 +35,24 @@ class STTEngine:
         self.language = language
         self.vad_filter = vad_filter
         self.model = None
-        self.mic_device_index = mic_device_index
+        self._preferred_mic_index = mic_device_index
 
         self._device = device
         self._compute_type = compute_type
+
+        # Populated by _detect_mic()
+        self._mic_index: int | None = None
+        self._native_rate: int | None = None
+
+    def _detect_mic(self):
+        """Detect microphone once and cache device index + native rate."""
+        if self._native_rate is not None:
+            return
+        pa = pyaudio.PyAudio()
+        try:
+            self._mic_index, self._native_rate = find_mic(pa, self._preferred_mic_index)
+        finally:
+            pa.terminate()
 
     def load(self):
         """Load the whisper model. Call once at startup."""
@@ -75,25 +77,26 @@ class STTEngine:
         silence_timeout_s: float = 1.5,
         silence_threshold: int = 500,
     ) -> np.ndarray:
-        """Record from mic until silence is detected. Returns int16 numpy array."""
+        """Record from mic until silence is detected. Returns int16 numpy array at 16 kHz."""
+        self._detect_mic()
+        native_rate = self._native_rate
+
         pa = pyaudio.PyAudio()
-        stream_kwargs = {
-            "format": pyaudio.paInt16,
-            "channels": CHANNELS,
-            "rate": SAMPLE_RATE,
-            "input": True,
-            "frames_per_buffer": CHUNK_SAMPLES,
-        }
-        if self.mic_device_index is not None:
-            stream_kwargs["input_device_index"] = self.mic_device_index
-        stream = pa.open(**stream_kwargs)
+        stream = pa.open(
+            format=pyaudio.paInt16,
+            channels=CHANNELS,
+            rate=native_rate,
+            input=True,
+            frames_per_buffer=CHUNK_SAMPLES,
+            input_device_index=self._mic_index,
+        )
 
         frames: list[bytes] = []
         silent_chunks = 0
-        max_silent_chunks = int(SAMPLE_RATE / CHUNK_SAMPLES * silence_timeout_s)
-        max_chunks = int(SAMPLE_RATE / CHUNK_SAMPLES * max_duration_s)
+        max_silent_chunks = int(native_rate / CHUNK_SAMPLES * silence_timeout_s)
+        max_chunks = int(native_rate / CHUNK_SAMPLES * max_duration_s)
 
-        log.info("Recording utterance...")
+        log.info(f"Recording at {native_rate} Hz ...")
         try:
             for _ in range(max_chunks):
                 data = stream.read(CHUNK_SAMPLES, exception_on_overflow=False)
@@ -115,9 +118,13 @@ class STTEngine:
             stream.close()
             pa.terminate()
 
-        audio = np.frombuffer(b"".join(frames), dtype=np.int16)
-        duration = len(audio) / SAMPLE_RATE
-        log.info(f"Recorded {duration:.1f}s of audio")
+        audio_native = np.frombuffer(b"".join(frames), dtype=np.int16)
+
+        # Resample to 16 kHz for Whisper
+        audio = resample(audio_native, native_rate, TARGET_RATE)
+
+        duration = len(audio) / TARGET_RATE
+        log.info(f"Recorded {duration:.1f}s ({native_rate} -> {TARGET_RATE} Hz)")
         return audio
 
     def transcribe(self, audio: np.ndarray) -> tuple[str, float]:

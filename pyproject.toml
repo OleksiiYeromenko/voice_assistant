@@ -24,11 +24,15 @@ dependencies = [
     "piper-tts>=1.2.0",
     # Resource monitoring
     "psutil>=6.0",
+    # Tools
+    "httpx>=0.27.0",
+    "duckduckgo-search>=7.0.0",
 ]
 
 [tool.uv.sources]
-# Overrides the PyPI package, fetching a patched version that removes tflite-runtime
-private-assistant-openwakeword = { git = "https://github.com/dscripka/openWakeWord", rev = "refs/pull/216/head" }
+# PR#216 removes tflite-runtime dep (not merged upstream yet, v0.6.0 still requires it).
+# Pinned to exact commit for reproducibility. Re-check periodically.
+private-assistant-openwakeword = { git = "https://github.com/dscripka/openWakeWord", rev = "e49345a" }
 
 [project.optional-dependencies]
 cloud = [
@@ -36,7 +40,6 @@ cloud = [
     "google-genai>=1.0.0",
 ]
 tools = [
-    "httpx>=0.27.0",         # web search, weather API
     "gkeepapi>=0.16.0",      # Google Keep
 ]
 ui = [

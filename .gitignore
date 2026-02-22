@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# Generated runtime data
+tts_output/
+stt_output/
+data/
+
+# Environment files (API keys)
+.env
+.env.local
+
+# OS
+.DS_Store

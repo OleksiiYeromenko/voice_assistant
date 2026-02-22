@@ -7,7 +7,6 @@ wake_word:
   # Or path to custom .onnx model
   model: "hey_jarvis"
   threshold: 0.7           # Detection confidence (0.0-1.0)
-  chunk_ms: 80             # Audio chunk size in ms (openWakeWord default)
 
 # --- Speech-to-Text ---
 stt:
@@ -18,7 +17,9 @@ stt:
   language: "en"
   vad_filter: true
   silence_timeout_s: 1.5   # Seconds of silence before STT finalizes
-  mic_device_index: 1    # PyAudio device index (null = system default, set if needed)
+  # null = auto-detect USB microphone by name (survives device index changes on reboot).
+  # Set to an integer to force a specific PyAudio device index.
+  mic_device_index: null
 
 # --- LLM ---
 llm:

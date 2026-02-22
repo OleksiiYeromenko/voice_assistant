@@ -52,8 +52,11 @@ print("\n" + "=" * 60)
 usb_inputs = [(i, n, c, r) for i, n, c, r in input_devices if "usb" in n.lower()]
 if usb_inputs:
     idx = usb_inputs[0][0]
-    print(f"✅ Suggested: set mic_device_index: {idx} in config/config.yaml")
+    print(f"✅ USB mic found: index={idx}, rate={usb_inputs[0][3]} Hz")
     print(f"   Device: '{usb_inputs[0][1]}'")
+    print()
+    print("   The assistant auto-detects USB mics when mic_device_index is null.")
+    print(f"   To force this device: set mic_device_index: {idx} in config/config.yaml")
 else:
     print("⚠  No USB mic found. Check 'arecord -l' output.")
     default = pa.get_default_input_device_info()

@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
-# Voice Assistant — RPi 5 Setup
-# Run once: bash scripts/setup.sh
+# Voice Assistant — RPi 5 one-time setup.
+#
+# This script handles system-level setup that pyproject.toml / uv cannot:
+#   1. System packages via apt (espeak-ng, alsa-utils, portaudio19-dev)
+#   2. Python deps via uv sync (convenience wrapper)
+#   3. Ollama model download (qwen3:4b, ~2.5 GB)
+#   4. Piper voice model download from HuggingFace (~65 MB)
+#   5. Runtime directory creation (data/, tts_output/, stt_output/)
+#   6. Audio device detection and mic index suggestion
+#
+# Safe to run multiple times (idempotent).
+# Usage: bash scripts/setup.sh
 
 set -euo pipefail
 

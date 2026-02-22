@@ -123,30 +123,23 @@ def get_weather(city: str) -> str:
 
 
 def web_search(query: str) -> str:
-    """Simple web search using DuckDuckGo instant answer API."""
-    import httpx
+    """Web search via DuckDuckGo. Returns top 3 results."""
+    from duckduckgo_search import DDGS
 
     try:
-        resp = httpx.get(
-            "https://api.duckduckgo.com/",
-            params={"q": query, "format": "json", "no_html": 1},
-            timeout=5,
-        ).json()
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=3))
 
-        # Try abstract first, then related topics
-        if resp.get("AbstractText"):
-            return resp["AbstractText"][:500]
+        if not results:
+            return f"No results found for: {query}"
 
-        topics = resp.get("RelatedTopics", [])
-        if topics:
-            results = []
-            for t in topics[:3]:
-                if isinstance(t, dict) and "Text" in t:
-                    results.append(t["Text"][:150])
-            if results:
-                return " | ".join(results)
+        summaries = []
+        for r in results:
+            title = r.get("title", "")
+            body = r.get("body", "")
+            summaries.append(f"{title}: {body}"[:200])
 
-        return f"No results found for: {query}"
+        return " | ".join(summaries)
     except Exception as e:
         log.error(f"Search error: {e}")
         return f"Search failed: {e}"
