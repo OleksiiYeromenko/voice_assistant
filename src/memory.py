@@ -298,6 +298,34 @@ class MemoryStore:
         return "Past conversations:\n" + "\n".join(lines)
 
     # ------------------------------------------------------------------
+    # List memory — for the my_memory tool
+    # ------------------------------------------------------------------
+    def list_memory(self) -> str:
+        """Format all stored preferences and facts for voice output.
+
+        Called by the 'my_memory' tool when user asks "what do you know about me?"
+        """
+        parts: list[str] = []
+
+        prefs = self.get_all_preferences()
+        if prefs:
+            parts.append("Your preferences:")
+            for key, val in prefs.items():
+                label = key.replace("_", " ")
+                parts.append(f"- {label}: {val}")
+
+        facts = self.get_facts(limit=20)
+        if facts:
+            parts.append("Things I remember about you:")
+            for f in facts:
+                parts.append(f"- {f['text']}")
+
+        if not parts:
+            return "I don't have any stored preferences or facts about you yet."
+
+        return "\n".join(parts)
+
+    # ------------------------------------------------------------------
     # Remember — unified entry point (classifies preference vs fact)
     # ------------------------------------------------------------------
     def remember(self, text: str) -> str:

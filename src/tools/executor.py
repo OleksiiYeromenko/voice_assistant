@@ -152,8 +152,29 @@ RECALL_TOOL = {
 }
 
 
+MY_MEMORY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "my_memory",
+        "description": (
+            "List everything the assistant knows about the user: preferences and facts. "
+            "Use when the user asks 'what are my preferences?', 'what do you know about me?', "
+            "'list my settings', 'what have I told you?'."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": [],
+            "properties": {},
+        },
+    },
+}
+
+
 # All available tool schemas
-ALL_TOOLS = [WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL, SHOPPING_LIST_TOOL, REMEMBER_TOOL, RECALL_TOOL]
+ALL_TOOLS = [
+    WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL, SHOPPING_LIST_TOOL,
+    REMEMBER_TOOL, RECALL_TOOL, MY_MEMORY_TOOL,
+]
 
 # Tools whose results go stale immediately (e.g., time changes every minute).
 # Responses using these tools are replaced with placeholders in conversation

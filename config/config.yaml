@@ -53,6 +53,8 @@ llm:
         like "always use 24h time". This covers both facts and preferences.
       - recall: when user asks about previous conversations, e.g. "what did we talk about?",
         "check our previous conversations", "do you remember when we discussed...?"
+      - my_memory: when user asks "what do you know about me?", "what are my preferences?",
+        "list my settings", "what have I told you?". Returns all stored preferences and facts.
       - add_to_shopping_list: when user wants to add items to buy.
       If you lack current data to answer a question, ALWAYS use web_search rather than
       telling the user to "check a website" or "look it up themselves".

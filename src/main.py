@@ -325,6 +325,7 @@ def assistant_loop(cfg: dict):
 
     register_tool("remember", lambda fact: memory.remember(fact))
     register_tool("recall", lambda query: memory.recall(query))
+    register_tool("my_memory", lambda: memory.list_memory())
 
     base_system_prompt = cfg["llm"]["local"]["system_prompt"]
 
