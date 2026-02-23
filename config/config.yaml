@@ -49,7 +49,10 @@ llm:
         prices, "what happened", "latest", "current", "today". When in doubt, search.
         Do NOT use for: poems, stories, jokes, creative writing, explanations of concepts,
         math, or general knowledge you already know well.
-      - remember: when user says "remember this" or shares personal info to save.
+      - remember: when user says "remember this", shares personal info, or sets a preference
+        like "always use 24h time". This covers both facts and preferences.
+      - recall: when user asks about previous conversations, e.g. "what did we talk about?",
+        "check our previous conversations", "do you remember when we discussed...?"
       - add_to_shopping_list: when user wants to add items to buy.
       If you lack current data to answer a question, ALWAYS use web_search rather than
       telling the user to "check a website" or "look it up themselves".

@@ -214,18 +214,24 @@ def _stop_interrupt_listener(thread, stop_event):
 # ---------------------------------------------------------------------------
 # Session management
 # ---------------------------------------------------------------------------
-def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time):
-    """Check if session has expired. If so, summarize and clear."""
+def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time, session_id):
+    """Check if session has expired. If so, summarize, close, and open a new one.
+
+    Returns new session_id if session was ended, None otherwise.
+    """
     timeout = cfg.get("session", {}).get("inactivity_timeout_s", 300)
 
     if not conversation or last_interaction_time is None:
-        return
+        return None
 
     elapsed = time.time() - last_interaction_time
     if elapsed < timeout:
-        return
+        return None
 
     log.info(f"Session expired ({elapsed:.0f}s idle). Summarizing...")
+
+    summary_line = None
+    topics_line = None
 
     if cfg.get("session", {}).get("auto_summarize", True) and memory and len(conversation) >= 4:
         backend = backends.get("local")
@@ -233,25 +239,48 @@ def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_tim
             summary_messages = list(conversation[-10:])
             summary_messages.append({
                 "role": "user",
-                "content": "Summarize this conversation in one sentence for future reference.",
+                "content": (
+                    "Summarize this conversation in one sentence. "
+                    "Then on a second line, list 2-5 topic keywords separated by commas.\n"
+                    "Format:\n"
+                    "Summary: <one sentence>\n"
+                    "Topics: <keyword1, keyword2, ...>"
+                ),
             })
-            summary_text = ""
+            raw_text = ""
             try:
                 for chunk in backend.stream(
                     summary_messages,
-                    system="You are a summarizer. Respond with exactly one sentence.",
+                    system="You are a summarizer. Respond in the exact format requested.",
                 ):
                     if chunk.text:
-                        summary_text += chunk.text
+                        raw_text += chunk.text
 
-                if summary_text.strip():
-                    memory.add_session_summary(summary_text.strip())
-                    log.info(f"Session summary: {summary_text.strip()}")
+                if raw_text.strip():
+                    # Parse structured response
+                    for line in raw_text.strip().splitlines():
+                        line = line.strip()
+                        if line.lower().startswith("summary:"):
+                            summary_line = line[len("summary:"):].strip()
+                        elif line.lower().startswith("topics:"):
+                            topics_line = line[len("topics:"):].strip()
+
+                    # Fallback: if model didn't follow format, use entire text
+                    if not summary_line:
+                        summary_line = raw_text.strip().splitlines()[0].strip()
+
+                    log.info(f"Session summary: {summary_line}")
+                    if topics_line:
+                        log.info(f"Session topics: {topics_line}")
             except Exception as e:
                 log.warning(f"Session summary failed: {e}")
 
+    # Close current session and open a fresh one
+    memory.close_session(session_id, summary=summary_line, topics=topics_line)
     conversation.clear()
+    new_session_id = memory.open_session()
     log.info("Conversation history cleared for new session.")
+    return new_session_id
 
 
 # ---------------------------------------------------------------------------
@@ -289,9 +318,13 @@ def assistant_loop(cfg: dict):
         triggers=cfg["llm"]["router"]["triggers"],
     )
 
-    # Persistent memory
+    # Persistent memory (SQLite-backed, crash-safe)
     memory = MemoryStore()
-    register_tool("remember", lambda fact: memory.add_fact(fact))
+    memory.close_stale_sessions()  # close any sessions left open from crash/restart
+    current_session_id = memory.open_session()
+
+    register_tool("remember", lambda fact: memory.remember(fact))
+    register_tool("recall", lambda query: memory.recall(query))
 
     base_system_prompt = cfg["llm"]["local"]["system_prompt"]
 
@@ -320,46 +353,57 @@ def assistant_loop(cfg: dict):
     log.info("Voice assistant ready!")
     log.info(f"Resources: {snapshot().summary()}")
 
-    if use_text_input:
-        log.info("Text input mode — type your message, Ctrl+C to quit.")
-        while True:
-            try:
-                user_text = input("\n[Type message] ").strip()
-                if not user_text:
-                    continue
-                _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time)
+    try:
+        if use_text_input:
+            log.info("Text input mode — type your message, Ctrl+C to quit.")
+            while True:
+                try:
+                    user_text = input("\n[Type message] ").strip()
+                    if not user_text:
+                        continue
+                    new_sid = _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time, current_session_id)
+                    if new_sid is not None:
+                        current_session_id = new_sid
+                    _handle_interaction(
+                        stt, tts, router, backends, base_system_prompt,
+                        conversation, cfg, memory=memory, text=user_text,
+                    )
+                    last_interaction_time = time.time()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nGoodbye!")
+                    break
+        elif use_wake_word:
+            log.info("Say the wake word to start...")
+            for confidence in wake_detector.listen():
+                tts.play_beep()  # Acknowledge wake word (non-blocking, plays on speaker)
+                new_sid = _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time, current_session_id)
+                if new_sid is not None:
+                    current_session_id = new_sid
                 _handle_interaction(
                     stt, tts, router, backends, base_system_prompt,
-                    conversation, cfg, memory=memory, text=user_text,
+                    conversation, cfg, memory=memory, wake_detector=wake_detector,
                 )
                 last_interaction_time = time.time()
-            except (EOFError, KeyboardInterrupt):
-                print("\nGoodbye!")
-                break
-    elif use_wake_word:
-        log.info("Say the wake word to start...")
-        for confidence in wake_detector.listen():
-            tts.play_beep()  # Acknowledge wake word (non-blocking, plays on speaker)
-            _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time)
-            _handle_interaction(
-                stt, tts, router, backends, base_system_prompt,
-                conversation, cfg, memory=memory, wake_detector=wake_detector,
-            )
-            last_interaction_time = time.time()
-    else:
-        log.info("Keyboard mode — press Enter to speak, Ctrl+C to quit.")
-        while True:
-            try:
-                input("\n[Press Enter to speak] ")
-                _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time)
-                _handle_interaction(
-                    stt, tts, router, backends, base_system_prompt,
-                    conversation, cfg, memory=memory,
-                )
-                last_interaction_time = time.time()
-            except (EOFError, KeyboardInterrupt):
-                print("\nGoodbye!")
-                break
+        else:
+            log.info("Keyboard mode — press Enter to speak, Ctrl+C to quit.")
+            while True:
+                try:
+                    input("\n[Press Enter to speak] ")
+                    new_sid = _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time, current_session_id)
+                    if new_sid is not None:
+                        current_session_id = new_sid
+                    _handle_interaction(
+                        stt, tts, router, backends, base_system_prompt,
+                        conversation, cfg, memory=memory,
+                    )
+                    last_interaction_time = time.time()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nGoodbye!")
+                    break
+    finally:
+        # Graceful shutdown: close the current session
+        memory.close_session(current_session_id)
+        log.info("Session closed on shutdown.")
 
 
 def _handle_interaction(

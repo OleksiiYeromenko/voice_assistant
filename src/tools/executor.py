@@ -104,9 +104,10 @@ REMEMBER_TOOL = {
     "function": {
         "name": "remember",
         "description": (
-            "Store a fact about the user for future reference. "
+            "Store information about the user for future reference. "
             "Use this when the user says 'remember that...', 'my name is...', "
-            "'I like...', or shares important personal information."
+            "'I like...', 'always use...', 'prefer...', 'never...', or shares "
+            "important personal information or preferences."
         ),
         "parameters": {
             "type": "object",
@@ -114,7 +115,36 @@ REMEMBER_TOOL = {
             "properties": {
                 "fact": {
                     "type": "string",
-                    "description": "The fact to remember, e.g. 'User prefers metric units'",
+                    "description": (
+                        "The information to remember, e.g. 'User prefers metric units' "
+                        "or 'always use 24h time format'"
+                    ),
+                },
+            },
+        },
+    },
+}
+
+
+RECALL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "recall",
+        "description": (
+            "Search past conversation summaries. Use when the user asks about "
+            "previous conversations, e.g. 'what did we talk about yesterday?', "
+            "'do you remember when we discussed...?', 'check our previous conversations'."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Keywords to search for in past conversations, "
+                        "e.g. 'recipe', 'weather london', 'yesterday'"
+                    ),
                 },
             },
         },
@@ -123,7 +153,7 @@ REMEMBER_TOOL = {
 
 
 # All available tool schemas
-ALL_TOOLS = [WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL, SHOPPING_LIST_TOOL, REMEMBER_TOOL]
+ALL_TOOLS = [WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL, SHOPPING_LIST_TOOL, REMEMBER_TOOL, RECALL_TOOL]
 
 # Tools whose results go stale immediately (e.g., time changes every minute).
 # Responses using these tools are replaced with placeholders in conversation
