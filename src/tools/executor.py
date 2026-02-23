@@ -125,6 +125,11 @@ REMEMBER_TOOL = {
 # All available tool schemas
 ALL_TOOLS = [WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL, SHOPPING_LIST_TOOL, REMEMBER_TOOL]
 
+# Tools whose results go stale immediately (e.g., time changes every minute).
+# Responses using these tools are replaced with placeholders in conversation
+# history so the LLM doesn't parrot old values on subsequent calls.
+VOLATILE_TOOLS: set[str] = {"get_time"}
+
 
 # ---------------------------------------------------------------------------
 # Tool implementations

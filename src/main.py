@@ -16,7 +16,7 @@ from src.stt.engine import STTEngine
 from src.tts.engine import TTSEngine
 from src.llm.backends import OllamaBackend, ClaudeBackend, GeminiBackend, LLMChunk, ToolCall
 from src.router.router import ModelRouter
-from src.tools.executor import ALL_TOOLS, execute_tool, register_tool
+from src.tools.executor import ALL_TOOLS, VOLATILE_TOOLS, execute_tool, register_tool
 
 log = logging.getLogger(__name__)
 
@@ -77,9 +77,13 @@ def run_llm_with_tools(
     system: str,
     tts: TTSEngine,
     latency: LatencyRecord,
-) -> str:
-    """Run LLM with tool calling and per-sentence streaming TTS."""
+) -> tuple[str, set[str]]:
+    """Run LLM with tool calling and per-sentence streaming TTS.
+
+    Returns (response_text, tools_used) so callers can detect volatile tool usage.
+    """
     full_response = ""
+    tools_used: set[str] = set()
 
     for round_num in range(MAX_TOOL_ROUNDS):
         tool_calls: list[ToolCall] = []
@@ -120,6 +124,7 @@ def run_llm_with_tools(
 
             for tc in tool_calls:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
+                tools_used.add(tc.name)
                 result = execute_tool(tc.name, tc.arguments)
                 messages.append({
                     "role": "tool",
@@ -132,7 +137,7 @@ def run_llm_with_tools(
         full_response = text_buffer.strip()
         break
 
-    return full_response
+    return full_response, tools_used
 
 
 def run_streaming_llm(
@@ -142,8 +147,12 @@ def run_streaming_llm(
     system: str,
     tts: TTSEngine,
     latency: LatencyRecord,
-) -> str:
-    """Stream LLM → TTS sentence-by-sentence with tool support for cloud models."""
+) -> tuple[str, set[str]]:
+    """Stream LLM → TTS sentence-by-sentence with tool support for cloud models.
+
+    Returns (response_text, tools_used) for consistency with run_llm_with_tools.
+    Cloud path currently doesn't loop tool calls, so tools_used is always empty.
+    """
     full_text = ""
     first_token = True
 
@@ -164,7 +173,7 @@ def run_streaming_llm(
         print(text, end="", flush=True)
 
     print()  # Newline after streaming
-    return full_text.strip()
+    return full_text.strip(), set()
 
 
 # ---------------------------------------------------------------------------
@@ -401,13 +410,14 @@ def _handle_interaction(
     interrupt_thread, interrupt_stop = _start_interrupt_listener(wake_detector, tts)
 
     # 5. LLM + Tools + TTS
+    tools_used: set[str] = set()
     try:
         if decision.backend_key == "local":
-            response = run_llm_with_tools(
+            response, tools_used = run_llm_with_tools(
                 backend, list(recent), ALL_TOOLS, system_prompt, tts, latency,
             )
         else:
-            response = run_streaming_llm(
+            response, tools_used = run_streaming_llm(
                 backend, list(recent), ALL_TOOLS, system_prompt, tts, latency,
             )
     except Exception as e:
@@ -416,7 +426,7 @@ def _handle_interaction(
         if fallback:
             print(f"  [Falling back to {fallback.name}]")
             try:
-                response = run_llm_with_tools(
+                response, tools_used = run_llm_with_tools(
                     fallback, list(recent), ALL_TOOLS, system_prompt, tts, latency,
                 )
             except Exception as e2:
@@ -430,7 +440,15 @@ def _handle_interaction(
         # releases the mic. Otherwise listen() can't reopen the device.
         _stop_interrupt_listener(interrupt_thread, interrupt_stop)
 
-    conversation.append({"role": "assistant", "content": response})
+    # Store response in conversation history. For volatile tools (e.g., get_time),
+    # replace the response with a placeholder so the LLM doesn't parrot stale values.
+    if tools_used & VOLATILE_TOOLS:
+        conversation.append({
+            "role": "assistant",
+            "content": "[Answered a time/date question — always call get_time for current values]",
+        })
+    else:
+        conversation.append({"role": "assistant", "content": response})
 
     # 6. Log metrics + resource alerts
     latency.total_ms = (time.perf_counter() - start) * 1000
