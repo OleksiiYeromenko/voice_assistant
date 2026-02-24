@@ -47,8 +47,10 @@ class WakeWordDetector:
         import openwakeword
         from openwakeword.model import Model
 
-        # Download pre-trained models on first run
-        openwakeword.utils.download_models()
+        # Only download pre-trained models when using a built-in model name.
+        # Custom .onnx paths don't need the download step.
+        if not model.endswith(".onnx"):
+            openwakeword.utils.download_models()
 
         self.model_name = model
         self.threshold = threshold

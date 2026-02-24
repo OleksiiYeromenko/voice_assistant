@@ -4,9 +4,9 @@
 # --- Wake Word ---
 wake_word:
   # Pre-trained models: "hey_jarvis", "alexa", "hey_mycroft", "timer", etc.
-  # Or path to custom .onnx model
-  model: "hey_jarvis"
-  threshold: 0.7           # Detection confidence (0.0-1.0)
+  # Or path to custom .onnx model, e.g. "./models/my_wakeword.onnx"
+  model: "./models/my_wakeword.onnx"
+  threshold: 0.5           # Detection confidence (0.0-1.0) — tune for your custom model
 
 # --- Speech-to-Text ---
 stt:
