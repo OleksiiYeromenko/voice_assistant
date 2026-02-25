@@ -31,7 +31,7 @@ llm:
 
   # Fast local model — default for everyday queries
   local:
-    model: "qwen2.5:3b"
+    model: "qwen3:4b-instruct"
     temperature: 0.7
     num_ctx: 4096
     think: false
@@ -60,7 +60,7 @@ llm:
       telling the user to "check a website" or "look it up themselves".
       After using web_search, give a direct concise answer from the results.
       NEVER list website names or tell the user to visit websites.
-      If the search results don't contain exact data, say what you found briefly.
+      If the search results don't contain exact data, say what you found briefly. /no_th  ink
 
   cloud:
     claude:
