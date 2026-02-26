@@ -8,6 +8,12 @@ Usage:
     python scripts/bench_ollama.py                  # bench all models
     python scripts/bench_ollama.py qwen2.5:3b       # bench specific model(s)
     python scripts/bench_ollama.py --rounds 3        # average over 3 rounds
+
+    # Test thread count impact (Ollama may misdetect on ARM64):
+    python scripts/bench_ollama.py qwen2.5:3b --num-thread 2 4 6 8
+
+    # Test context size impact:
+    python scripts/bench_ollama.py qwen2.5:3b --num-ctx 512 1024 2048 4096
 """
 
 import argparse
@@ -15,6 +21,7 @@ import json
 import sys
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import ollama
 
@@ -90,12 +97,22 @@ def warm_model(client: ollama.Client, model: str) -> float:
     return time.perf_counter() - t0
 
 
-def bench_prompt(client: ollama.Client, model: str, prompt: str) -> RunResult:
+def bench_prompt(
+    client: ollama.Client,
+    model: str,
+    prompt: str,
+    num_ctx: int = NUM_CTX,
+    num_thread: int | None = None,
+) -> RunResult:
     """Stream a single prompt and measure performance."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ]
+
+    options: dict[str, Any] = {"temperature": 0.7, "num_ctx": num_ctx}
+    if num_thread is not None:
+        options["num_thread"] = num_thread
 
     t_start = time.perf_counter()
     t_first: float | None = None
@@ -105,7 +122,7 @@ def bench_prompt(client: ollama.Client, model: str, prompt: str) -> RunResult:
         model=model,
         messages=messages,
         stream=True,
-        options={"temperature": 0.7, "num_ctx": NUM_CTX},
+        options=options,
     ):
         content = chunk.get("message", {}).get("content", "")
         if content and t_first is None:
@@ -131,9 +148,16 @@ def bench_model(
     model: str,
     prompts: list[str],
     rounds: int,
+    num_ctx: int = NUM_CTX,
+    num_thread: int | None = None,
 ) -> ModelResult:
     """Run all prompts N rounds against one model."""
-    result = ModelResult(model=model)
+    label = model
+    if num_thread is not None:
+        label += f" [threads={num_thread}]"
+    if num_ctx != NUM_CTX:
+        label += f" [ctx={num_ctx}]"
+    result = ModelResult(model=label)
 
     # Warm up (cold load)
     print(f"  Loading model...", end=" ", flush=True)
@@ -146,7 +170,7 @@ def bench_model(
         for prompt in prompts:
             short = prompt[:50] + ("..." if len(prompt) > 50 else "")
             print(f"    \"{short}\"", end=" ", flush=True)
-            run = bench_prompt(client, model, prompt)
+            run = bench_prompt(client, model, prompt, num_ctx=num_ctx, num_thread=num_thread)
             result.runs.append(run)
             print(
                 f"-> {run.tok_count} tok, "
@@ -232,6 +256,14 @@ def main() -> None:
         "--output", "-o", default=None,
         help="Save results to JSON file",
     )
+    parser.add_argument(
+        "--num-thread", type=int, nargs="+", default=None,
+        help="Thread count(s) to test (e.g. --num-thread 2 4 6 8)",
+    )
+    parser.add_argument(
+        "--num-ctx", type=int, nargs="+", default=None,
+        help="Context size(s) to test (e.g. --num-ctx 512 1024 2048 4096)",
+    )
     args = parser.parse_args()
 
     client = ollama.Client(host=args.url)
@@ -245,16 +277,43 @@ def main() -> None:
             print("No models found. Pull some models first: ollama pull <model>")
             sys.exit(1)
 
-    print(f"Benchmarking {len(models)} model(s), {args.rounds} round(s), {len(PROMPTS)} prompts each\n")
+    # Build test matrix: (model, num_ctx, num_thread) combinations
+    ctx_values = args.num_ctx or [NUM_CTX]
+    thread_values = args.num_thread or [None]
+
+    total_combos = len(models) * len(ctx_values) * len(thread_values)
+    sweep_mode = args.num_thread or args.num_ctx
+    if sweep_mode:
+        print(f"Parameter sweep: {len(models)} model(s) × ", end="")
+        if args.num_thread:
+            print(f"threads={args.num_thread} × ", end="")
+        if args.num_ctx:
+            print(f"ctx={args.num_ctx} × ", end="")
+        print(f"{args.rounds} round(s), {len(PROMPTS)} prompts each")
+        print(f"Total configurations: {total_combos}\n")
+    else:
+        print(f"Benchmarking {len(models)} model(s), {args.rounds} round(s), {len(PROMPTS)} prompts each\n")
 
     results: list[ModelResult] = []
-    for i, model in enumerate(models, 1):
-        print(f"[{i}/{len(models)}] {model}")
-        try:
-            result = bench_model(client, model, PROMPTS, args.rounds)
-            results.append(result)
-        except Exception as e:
-            print(f"  ERROR: {e}\n")
+    combo = 0
+    for model in models:
+        for ctx in ctx_values:
+            for threads in thread_values:
+                combo += 1
+                label_parts = [model]
+                if args.num_thread:
+                    label_parts.append(f"t={threads}")
+                if args.num_ctx:
+                    label_parts.append(f"ctx={ctx}")
+                print(f"[{combo}/{total_combos}] {' | '.join(label_parts)}")
+                try:
+                    result = bench_model(
+                        client, model, PROMPTS, args.rounds,
+                        num_ctx=ctx, num_thread=threads,
+                    )
+                    results.append(result)
+                except Exception as e:
+                    print(f"  ERROR: {e}\n")
 
     if results:
         print_summary(results)
