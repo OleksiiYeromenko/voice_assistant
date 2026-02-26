@@ -58,6 +58,7 @@ class OllamaBackend:
         base_url: str = "http://localhost:11434",
         temperature: float = 0.7,
         num_ctx: int = 4096,
+        num_thread: int | None = None,
         system_prompt: str = "",
         think: bool = False,
     ):
@@ -66,6 +67,7 @@ class OllamaBackend:
         self._model = model
         self._temperature = temperature
         self._num_ctx = num_ctx
+        self._num_thread = num_thread
         self._system_prompt = system_prompt
         self._think = think
 
@@ -74,18 +76,26 @@ class OllamaBackend:
         return f"local/{self._model}"
 
     def warm(self):
-        """Send a minimal request to preload the model into memory.
+        """Preload model into memory and prime the KV cache.
 
+        Uses the real num_ctx so the first user query doesn't pay
+        a ~3-4s KV-cache allocation penalty.
         Set OLLAMA_KEEP_ALIVE=-1 in the Ollama systemd service to keep
         the model loaded between requests.
         """
         try:
             log.info(f"Warming up {self._model}...")
             start = time.perf_counter()
+            options: dict[str, Any] = {
+                "num_predict": 1,
+                "num_ctx": self._num_ctx,
+            }
+            if self._num_thread is not None:
+                options["num_thread"] = self._num_thread
             self._client.chat(
                 model=self._model,
                 messages=[{"role": "user", "content": "hi"}],
-                options={"num_predict": 1, "num_ctx": 32},
+                options=options,
             )
             elapsed = time.perf_counter() - start
             log.info(f"Model {self._model} warm in {elapsed:.1f}s")
@@ -105,14 +115,18 @@ class OllamaBackend:
             full_messages.append({"role": "system", "content": sys_prompt})
         full_messages.extend(messages)
 
+        options: dict[str, Any] = {
+            "temperature": self._temperature,
+            "num_ctx": self._num_ctx,
+        }
+        if self._num_thread is not None:
+            options["num_thread"] = self._num_thread
+
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": full_messages,
             "stream": True,
-            "options": {
-                "temperature": self._temperature,
-                "num_ctx": self._num_ctx,
-            },
+            "options": options,
             "think": self._think,
         }
         if tools:

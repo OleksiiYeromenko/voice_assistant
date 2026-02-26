@@ -39,6 +39,7 @@ def build_backends(cfg: dict) -> dict:
         base_url=base_url,
         temperature=local_cfg["temperature"],
         num_ctx=local_cfg["num_ctx"],
+        num_thread=local_cfg.get("num_thread"),
         system_prompt=local_cfg["system_prompt"],
         think=local_cfg.get("think", False),
     )
