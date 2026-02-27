@@ -20,7 +20,11 @@ WEATHER_TOOL = {
     "type": "function",
     "function": {
         "name": "get_weather",
-        "description": "Get the current weather for a city. Use this when the user asks about weather.",
+        "description": (
+            "Get current weather or a multi-day forecast for a city. "
+            "Use forecast_days=0 for current conditions, forecast_days=1 for tomorrow, "
+            "forecast_days=3 for the next 3 days, forecast_days=7 for the week ahead."
+        ),
         "parameters": {
             "type": "object",
             "required": ["city"],
@@ -28,6 +32,13 @@ WEATHER_TOOL = {
                 "city": {
                     "type": "string",
                     "description": "City name, e.g. 'London' or 'New York'",
+                },
+                "forecast_days": {
+                    "type": "integer",
+                    "description": (
+                        "0 = current conditions (default), "
+                        "1 = tomorrow, 2-7 = that many days ahead starting tomorrow"
+                    ),
                 },
             },
         },
@@ -186,8 +197,13 @@ VOLATILE_TOOLS: set[str] = {"get_time"}
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-def get_weather(city: str) -> str:
-    """Fetch weather from Open-Meteo (free, no API key)."""
+def get_weather(city: str, forecast_days: int = 0) -> str:
+    """Fetch current weather or multi-day forecast from Open-Meteo (free, no API key).
+
+    forecast_days=0  → current conditions
+    forecast_days=1  → tomorrow
+    forecast_days=N  → next N days starting tomorrow (max 7)
+    """
     import httpx
 
     try:
@@ -205,25 +221,61 @@ def get_weather(city: str) -> str:
         lon = geo["results"][0]["longitude"]
         name = geo["results"][0].get("name", city)
 
-        # Step 2: Get current weather
-        weather = httpx.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code",
-            },
-            timeout=5,
-        ).json()
+        if forecast_days <= 0:
+            # Current conditions
+            weather = httpx.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code",
+                },
+                timeout=5,
+            ).json()
 
-        cur = weather["current"]
-        temp = cur["temperature_2m"]
-        humidity = cur["relative_humidity_2m"]
-        wind = cur["wind_speed_10m"]
-        code = cur["weather_code"]
-        desc = _weather_code_to_text(code)
+            cur = weather["current"]
+            temp = cur["temperature_2m"]
+            humidity = cur["relative_humidity_2m"]
+            wind = cur["wind_speed_10m"]
+            code = cur["weather_code"]
+            desc = _weather_code_to_text(code)
 
-        return f"{name}: {temp}°C, {desc}, humidity {humidity}%, wind {wind} km/h"
+            return f"{name}: {temp}°C, {desc}, humidity {humidity}%, wind {wind} km/h"
+
+        else:
+            # Daily forecast — request N+1 days so index 0 (today) can be skipped
+            days_capped = min(forecast_days, 7)
+            weather = httpx.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max",
+                    "forecast_days": days_capped + 1,
+                },
+                timeout=5,
+            ).json()
+
+            daily = weather["daily"]
+            # Slice off today (index 0), take the requested number of future days
+            dates  = daily["time"][1 : days_capped + 1]
+            codes  = daily["weather_code"][1 : days_capped + 1]
+            highs  = daily["temperature_2m_max"][1 : days_capped + 1]
+            lows   = daily["temperature_2m_min"][1 : days_capped + 1]
+            precip = daily["precipitation_sum"][1 : days_capped + 1]
+            winds  = daily["wind_speed_10m_max"][1 : days_capped + 1]
+
+            if days_capped == 1:
+                day_str = _format_day(codes[0], highs[0], lows[0], precip[0], winds[0])
+                return f"{name} tomorrow: {day_str}."
+
+            parts = []
+            for i in range(len(dates)):
+                day_name = _day_name(dates[i])
+                day_str = _format_day(codes[i], highs[i], lows[i], precip[i], winds[i])
+                parts.append(f"{day_name}: {day_str}")
+            return f"{name} {days_capped}-day forecast. " + ". ".join(parts) + "."
+
     except Exception as e:
         log.error(f"Weather error: {e}")
         return f"Weather lookup failed: {e}"
@@ -352,6 +404,24 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> str:
     except Exception as e:
         log.error(f"Tool {name} failed: {e}")
         return f"Tool error: {e}"
+
+
+def _day_name(date_str: str) -> str:
+    """Return weekday name from an ISO date string, e.g. '2024-01-15' → 'Monday'."""
+    from datetime import date
+    return date.fromisoformat(date_str).strftime("%A")
+
+
+def _format_day(code, high, low, precip, wind) -> str:
+    """Format a single forecast day as a concise voice-friendly string."""
+    high_v = float(high) if high is not None else 0.0
+    low_v  = float(low)  if low  is not None else 0.0
+    parts = [f"high {high_v:.0f}°C, low {low_v:.0f}°C, {_weather_code_to_text(int(code or 0))}"]
+    if wind:
+        parts.append(f"wind up to {float(wind):.0f} km/h")
+    if precip and float(precip) > 0:
+        parts.append(f"{float(precip):.1f}mm rain")
+    return ", ".join(parts)
 
 
 def _weather_code_to_text(code: int) -> str:

@@ -45,7 +45,9 @@ llm:
       Tool usage rules:
       - get_time: ALWAYS call this tool for ANY time/date question. NEVER reuse or repeat
         a previous time value — time changes every minute. Each time question needs a fresh tool call.
-      - get_weather: when user asks about weather or temperature outside.
+      - get_weather: when user asks about weather, temperature outside, or forecast.
+        Use forecast_days=0 for current conditions (default), forecast_days=1 for tomorrow,
+        forecast_days=3 for "next few days", forecast_days=7 for the week ahead.
       - web_search: Use for anything you cannot answer with confident, up-to-date facts.
         This includes: current prices, live scores, today's news, recent events, stock/crypto
         prices, "what happened", "latest", "current", "today". When in doubt, search.
