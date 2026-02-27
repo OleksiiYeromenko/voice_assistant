@@ -23,7 +23,8 @@ stt:
 
 # --- LLM ---
 llm:
-  base_url: "http://192.168.1.74:11434"   # Shared Ollama URL for all local models "http://localhost:11434" 
+  remote_base_url: "http://192.168.1.74:11434"  # GPU PC (primary — tried first at startup)
+  local_base_url: "http://localhost:11434"        # RPi Ollama (fallback if GPU PC unreachable)
   # Optional Ollama server-side env vars for Raspberry Pi performance:
   #   OLLAMA_KEEP_ALIVE=-1           # Keep model in RAM forever (set in systemd service)
   #   OLLAMA_FLASH_ATTENTION=1       # Lower memory as context grows
@@ -74,6 +75,15 @@ llm:
   router:
     # Patterns that trigger model selection
     triggers:
+      remote:
+        - "use GPU"
+        - "use remote"
+        - "switch to GPU"
+        - "switch to remote"
+      local:
+        - "use local ollama"
+        - "switch to local"
+        - "go offline"
       claude:
         - "use claude"
         - "ask claude"
@@ -82,11 +92,10 @@ llm:
         - "use gemini"
         - "ask gemini"
         - "switch to gemini"
-      local:
-        - "use local"
-        - "go offline"
-        - "use ollama"
+      auto:
         - "go back to automatic"
+        - "use automatic"
+        - "use ollama"
 
 # --- Tools ---
 tools:

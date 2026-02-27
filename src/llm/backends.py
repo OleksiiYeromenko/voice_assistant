@@ -6,6 +6,7 @@ All backends implement the same streaming interface.
 import json
 import logging
 import time
+import urllib.request
 from collections.abc import Generator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -49,6 +50,18 @@ class LLMBackend(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Connectivity helper
+# ---------------------------------------------------------------------------
+def check_ollama_connectivity(base_url: str, timeout: float = 3.0) -> bool:
+    """Returns True if Ollama HTTP API is reachable at base_url."""
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/tags", timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Ollama (local)
 # ---------------------------------------------------------------------------
 class OllamaBackend:
@@ -61,6 +74,7 @@ class OllamaBackend:
         num_thread: int | None = None,
         system_prompt: str = "",
         think: bool = False,
+        label: str = "local",
     ):
         import ollama
         self._client = ollama.Client(host=base_url)
@@ -70,10 +84,11 @@ class OllamaBackend:
         self._num_thread = num_thread
         self._system_prompt = system_prompt
         self._think = think
+        self._label = label
 
     @property
     def name(self) -> str:
-        return f"local/{self._model}"
+        return f"{self._label}/{self._model}"
 
     def warm(self):
         """Preload model into memory and prime the KV cache.

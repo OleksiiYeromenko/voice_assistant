@@ -14,7 +14,7 @@ from src.memory import MemoryStore
 from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
 from src.stt.engine import STTEngine
 from src.tts.engine import TTSEngine
-from src.llm.backends import OllamaBackend, ClaudeBackend, GeminiBackend, LLMChunk, ToolCall
+from src.llm.backends import OllamaBackend, ClaudeBackend, GeminiBackend, LLMChunk, ToolCall, check_ollama_connectivity
 from src.router.router import ModelRouter
 from src.tools.executor import ALL_TOOLS, VOLATILE_TOOLS, execute_tool, register_tool
 
@@ -27,26 +27,55 @@ MAX_TOOL_ROUNDS = 3
 # ---------------------------------------------------------------------------
 # Backend construction
 # ---------------------------------------------------------------------------
-def build_backends(cfg: dict) -> dict:
-    """Create LLM backends from config."""
-    backends = {}
-    base_url = cfg["llm"].get("base_url", "http://localhost:11434")
+def build_backends(cfg: dict) -> tuple[dict, str]:
+    """Create LLM backends from config.
 
-    # Fast local model — always available
-    local_cfg = cfg["llm"]["local"]
-    backends["local"] = OllamaBackend(
-        model=local_cfg["model"],
-        base_url=base_url,
-        temperature=local_cfg["temperature"],
-        num_ctx=local_cfg["num_ctx"],
-        num_thread=local_cfg.get("num_thread"),
-        system_prompt=local_cfg["system_prompt"],
-        think=local_cfg.get("think", False),
+    Returns (backends, default_key) where default_key is "remote" if the GPU
+    PC Ollama is reachable at startup, otherwise "local" (localhost fallback).
+    """
+    backends = {}
+    llm_cfg = cfg["llm"]
+    remote_url = llm_cfg.get("remote_base_url", "http://192.168.1.74:11434")
+    local_url = llm_cfg.get("local_base_url", "http://localhost:11434")
+    model_cfg = llm_cfg["local"]
+
+    # Remote backend (GPU PC)
+    backends["remote"] = OllamaBackend(
+        model=model_cfg["model"],
+        base_url=remote_url,
+        temperature=model_cfg["temperature"],
+        num_ctx=model_cfg["num_ctx"],
+        num_thread=model_cfg.get("num_thread"),
+        system_prompt=model_cfg["system_prompt"],
+        think=model_cfg.get("think", False),
+        label="remote",
     )
+
+    # Local backend (localhost RPi Ollama — always-available fallback)
+    backends["local"] = OllamaBackend(
+        model=model_cfg["model"],
+        base_url=local_url,
+        temperature=model_cfg["temperature"],
+        num_ctx=model_cfg["num_ctx"],
+        num_thread=model_cfg.get("num_thread"),
+        system_prompt=model_cfg["system_prompt"],
+        think=model_cfg.get("think", False),
+        label="local",
+    )
+
+    # Connectivity check: prefer remote (GPU PC) if reachable
+    if check_ollama_connectivity(remote_url):
+        log.info(f"GPU PC Ollama reachable at {remote_url} — using as default")
+        default_key = "remote"
+    else:
+        log.warning(
+            f"GPU PC Ollama not reachable at {remote_url} — falling back to localhost"
+        )
+        default_key = "local"
 
     # Cloud backends — optional, fail gracefully
     try:
-        cloud_cfg = cfg["llm"]["cloud"]["claude"]
+        cloud_cfg = llm_cfg["cloud"]["claude"]
         backends["claude"] = ClaudeBackend(
             model=cloud_cfg["model"],
             max_tokens=cloud_cfg["max_tokens"],
@@ -56,7 +85,7 @@ def build_backends(cfg: dict) -> dict:
         log.warning(f"Claude backend not available: {e}")
 
     try:
-        cloud_cfg = cfg["llm"]["cloud"]["gemini"]
+        cloud_cfg = llm_cfg["cloud"]["gemini"]
         backends["gemini"] = GeminiBackend(
             model=cloud_cfg["model"],
             max_tokens=cloud_cfg["max_tokens"],
@@ -65,7 +94,7 @@ def build_backends(cfg: dict) -> dict:
     except Exception as e:
         log.warning(f"Gemini backend not available: {e}")
 
-    return backends
+    return backends, default_key
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +264,7 @@ def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_tim
     topics_line = None
 
     if cfg.get("session", {}).get("auto_summarize", True) and memory and len(conversation) >= 4:
-        backend = backends.get("local")
+        backend = backends.get("local") or backends.get("remote")
         if backend:
             summary_messages = list(conversation[-10:])
             summary_messages.append({
@@ -307,16 +336,23 @@ def assistant_loop(cfg: dict):
         aplay_device=cfg["tts"]["aplay_device"],
     )
 
-    backends = build_backends(cfg)
+    backends, default_key = build_backends(cfg)
 
-    # Warm-start: preload local model into RAM
-    local_backend = backends.get("local")
-    if local_backend and hasattr(local_backend, "warm"):
-        local_backend.warm()
+    # Warm-start: preload model(s) into RAM.
+    # Always warm the default backend first; also warm localhost if it's not the default
+    # so the fallback is ready without a cold-start penalty.
+    warm_keys = [default_key]
+    if default_key != "local":
+        warm_keys.append("local")
+    for key in warm_keys:
+        b = backends.get(key)
+        if b and hasattr(b, "warm"):
+            b.warm()
 
     router = ModelRouter(
         backends=backends,
         triggers=cfg["llm"]["router"]["triggers"],
+        default_backend_key=default_key,
     )
 
     # Persistent memory (SQLite-backed, crash-safe)
@@ -438,8 +474,10 @@ def _handle_interaction(
     backend = router.get_backend(decision.backend_key)
     log.info(f"Router: {decision.reason} → {backend.name}")
 
-    if decision.backend_key != "local":
+    if not isinstance(backend, OllamaBackend):
         print(f"  [Using {decision.backend_key}]")
+    elif decision.backend_key != router.default_backend_key:
+        print(f"  [Using {decision.backend_key} ollama]")
 
     # 3. Build messages with memory context
     conversation.append({"role": "user", "content": decision.cleaned_text})
@@ -456,9 +494,11 @@ def _handle_interaction(
     interrupt_thread, interrupt_stop = _start_interrupt_listener(wake_detector, tts)
 
     # 5. LLM + Tools + TTS
+    # OllamaBackend (both "remote" and "local") supports full tool calling.
+    # Cloud backends (Claude, Gemini) use streaming-only path.
     tools_used: set[str] = set()
     try:
-        if decision.backend_key == "local":
+        if isinstance(backend, OllamaBackend):
             response, tools_used = run_llm_with_tools(
                 backend, list(recent), ALL_TOOLS, system_prompt, tts, latency,
             )
@@ -472,9 +512,14 @@ def _handle_interaction(
         if fallback:
             print(f"  [Falling back to {fallback.name}]")
             try:
-                response, tools_used = run_llm_with_tools(
-                    fallback, list(recent), ALL_TOOLS, system_prompt, tts, latency,
-                )
+                if isinstance(fallback, OllamaBackend):
+                    response, tools_used = run_llm_with_tools(
+                        fallback, list(recent), ALL_TOOLS, system_prompt, tts, latency,
+                    )
+                else:
+                    response, tools_used = run_streaming_llm(
+                        fallback, list(recent), ALL_TOOLS, system_prompt, tts, latency,
+                    )
             except Exception as e2:
                 response = "Sorry, I'm having trouble right now."
                 tts.speak(response)
