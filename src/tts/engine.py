@@ -10,12 +10,14 @@ Audio is piped directly from Piper to aplay in memory — no WAV files written t
 import io
 import logging
 import math
+import os
 import re
 import struct
 import subprocess
 import time
 import wave
 from collections.abc import Generator
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -92,21 +94,38 @@ class TTSEngine:
     # Core TTS
     # ------------------------------------------------------------------
     def synthesize(self, text: str) -> tuple[bytes, float]:
-        """Synthesize text to WAV bytes in memory. Returns (wav_bytes, synth_time_s)."""
-        start = time.perf_counter()
-        result = subprocess.run(
-            ["piper", "--model", self.voice],
-            input=text.encode(),
-            capture_output=True,
-            timeout=30,
-        )
-        synth_time = time.perf_counter() - start
+        """Synthesize text to WAV bytes in memory. Returns (wav_bytes, synth_time_s).
 
-        if result.returncode != 0:
-            log.error(f"Piper error: {result.stderr.decode()}")
-            return b"", synth_time
+        Uses a temp file because piper's Python package requires --output_file
+        (without it, piper tries to play audio itself via ffplay).
+        The temp file is deleted immediately after reading.
+        """
+        import tempfile
 
-        return result.stdout, synth_time
+        fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+
+        try:
+            start = time.perf_counter()
+            result = subprocess.run(
+                ["piper", "--model", self.voice, "--output_file", tmp_path],
+                input=text.encode(),
+                capture_output=True,
+                timeout=30,
+            )
+            synth_time = time.perf_counter() - start
+
+            if result.returncode != 0:
+                log.error(f"Piper error: {result.stderr.decode()}")
+                return b"", synth_time
+
+            wav_data = Path(tmp_path).read_bytes()
+            return wav_data, synth_time
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def _start_playback(self, wav_data: bytes) -> subprocess.Popen | None:
         """Start non-blocking WAV playback from memory via aplay stdin."""
