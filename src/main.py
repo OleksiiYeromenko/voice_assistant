@@ -536,7 +536,7 @@ def _handle_interaction(
     if tools_used & VOLATILE_TOOLS:
         conversation.append({
             "role": "assistant",
-            "content": "[Answered a time/date question — always call get_time for current values]",
+            "content": "I answered your time or date question using the get_time tool.",
         })
     else:
         conversation.append({"role": "assistant", "content": response})
