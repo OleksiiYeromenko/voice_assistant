@@ -87,6 +87,7 @@ tts:
   # Streaming: synthesize per-sentence and pipe to aplay
   aplay_device: "plughw:0,0"  # USB audio device
   sentence_delimiters: ".!?;"
+  sounds_dir: "./sounds"      # Pre-recorded WAV sounds; run scripts/generate_sounds.py --all to create
 
 # --- Session ---
 session:

@@ -106,6 +106,7 @@ def run_llm_with_tools(
     system: str,
     tts: TTSEngine,
     latency: LatencyRecord,
+    thinking_proc=None,
 ) -> tuple[str, set[str]]:
     """Run LLM with tool calling and per-sentence streaming TTS.
 
@@ -136,8 +137,9 @@ def run_llm_with_tools(
             latency.llm_ms += t.elapsed_ms
             latency.model_used = backend.name
 
-        # Stream tokens through TTS — speaks complete sentences as they arrive
-        for text in tts.stream_speak(token_gen(), latency=latency):
+        # Stream tokens through TTS — speaks complete sentences as they arrive.
+        # pre_proc (thinking sound) is passed only on the first round; cleared inside stream_speak.
+        for text in tts.stream_speak(token_gen(), latency=latency, pre_proc=thinking_proc if round_num == 0 else None):
             if not printed_prefix:
                 print("\n🤖 ", end="", flush=True)
                 printed_prefix = True
@@ -176,6 +178,7 @@ def run_streaming_llm(
     system: str,
     tts: TTSEngine,
     latency: LatencyRecord,
+    thinking_proc=None,
 ) -> tuple[str, set[str]]:
     """Stream LLM → TTS sentence-by-sentence with tool support for cloud models.
 
@@ -197,7 +200,7 @@ def run_streaming_llm(
         latency.llm_ms = t.elapsed_ms
         latency.model_used = backend.name
 
-    for text in tts.stream_speak(token_gen(), latency=latency):
+    for text in tts.stream_speak(token_gen(), latency=latency, pre_proc=thinking_proc):
         full_text += text
         print(text, end="", flush=True)
 
@@ -333,6 +336,7 @@ def assistant_loop(cfg: dict):
     tts = TTSEngine(
         voice=cfg["tts"]["voice"],
         aplay_device=cfg["tts"]["aplay_device"],
+        sounds_dir=cfg["tts"].get("sounds_dir", "./sounds"),
     )
 
     backends, default_key = build_backends(cfg)
@@ -386,6 +390,7 @@ def assistant_loop(cfg: dict):
 
     log.info("Voice assistant ready!")
     log.info(f"Resources: {snapshot().summary()}")
+    tts.play_startup()
 
     try:
         if use_text_input:
@@ -409,7 +414,7 @@ def assistant_loop(cfg: dict):
         elif use_wake_word:
             log.info("Say the wake word to start...")
             for confidence in wake_detector.listen():
-                tts.play_beep()  # Acknowledge wake word (non-blocking, plays on speaker)
+                tts.play_greeting()  # Acknowledge wake word (non-blocking, random greeting)
                 new_sid = _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time, current_session_id)
                 if new_sid is not None:
                     current_session_id = new_sid
@@ -462,6 +467,10 @@ def _handle_interaction(
 
     print(f"\n🎤 You: {text}")
 
+    # Start thinking sound now — plays in parallel with LLM processing.
+    # stream_speak() will wait for it to finish before the first TTS sentence plays.
+    thinking_proc = tts.play_thinking()
+
     # 2. Route
     with Timer() as route_timer:
         decision = router.route(text)
@@ -493,10 +502,12 @@ def _handle_interaction(
         if isinstance(backend, OllamaBackend):
             response, tools_used = run_llm_with_tools(
                 backend, list(recent), ALL_TOOLS, system_prompt, tts, latency,
+                thinking_proc=thinking_proc,
             )
         else:
             response, tools_used = run_streaming_llm(
                 backend, list(recent), ALL_TOOLS, system_prompt, tts, latency,
+                thinking_proc=thinking_proc,
             )
     except Exception as e:
         log.error(f"LLM failed: {e}")
@@ -507,10 +518,12 @@ def _handle_interaction(
                 if isinstance(fallback, OllamaBackend):
                     response, tools_used = run_llm_with_tools(
                         fallback, list(recent), ALL_TOOLS, system_prompt, tts, latency,
+                        thinking_proc=thinking_proc,
                     )
                 else:
                     response, tools_used = run_streaming_llm(
                         fallback, list(recent), ALL_TOOLS, system_prompt, tts, latency,
+                        thinking_proc=thinking_proc,
                     )
             except Exception as e2:
                 response = "Sorry, I'm having trouble right now."

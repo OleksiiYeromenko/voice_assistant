@@ -11,6 +11,7 @@ import io
 import logging
 import math
 import os
+import random
 import re
 import struct
 import subprocess
@@ -29,11 +30,35 @@ class TTSEngine:
         self,
         voice: str = "./voices/en_US-hfc_male-medium.onnx",
         aplay_device: str = "plughw:0,0",
+        sounds_dir: str = "./sounds",
     ):
         self.voice = voice
         self.aplay_device = aplay_device
         self._interrupted = False
         self._beep_wav: bytes | None = None
+        self._startup_sounds: list[Path] = []
+        self._greeting_sounds: list[Path] = []
+        self._thinking_sounds: list[Path] = []
+        self._load_sounds(sounds_dir)
+
+    # ------------------------------------------------------------------
+    # Sound bank (pre-recorded WAV files)
+    # ------------------------------------------------------------------
+    def _load_sounds(self, sounds_dir: str):
+        """Discover pre-recorded WAV files and store their paths."""
+        base = Path(sounds_dir)
+        mapping = {
+            "startup": self._startup_sounds,
+            "greeting": self._greeting_sounds,
+            "thinking": self._thinking_sounds,
+        }
+        for category, target_list in mapping.items():
+            category_dir = base / category
+            if not category_dir.is_dir():
+                continue
+            target_list.extend(sorted(category_dir.glob("*.wav")))
+            if target_list:
+                log.info(f"Found {len(target_list)} {category} sound(s) in {category_dir}")
 
     # ------------------------------------------------------------------
     # Interrupt mechanism
@@ -89,6 +114,25 @@ class TTSEngine:
         except Exception as e:
             log.warning(f"Beep failed: {e}")
             return None
+
+    def play_startup(self) -> None:
+        """Play startup sound (blocking). Falls back to no-op if no sounds found."""
+        if not self._startup_sounds:
+            return
+        proc = self._start_playback(self._startup_sounds[0].read_bytes())
+        self._wait_for_playback(proc)
+
+    def play_greeting(self) -> subprocess.Popen | None:
+        """Play a random greeting sound (non-blocking). Falls back to beep if none found."""
+        if not self._greeting_sounds:
+            return self.play_beep()
+        return self._start_playback(random.choice(self._greeting_sounds).read_bytes())
+
+    def play_thinking(self) -> subprocess.Popen | None:
+        """Play a random thinking/processing sound (non-blocking). Returns None if none found."""
+        if not self._thinking_sounds:
+            return None
+        return self._start_playback(random.choice(self._thinking_sounds).read_bytes())
 
     # ------------------------------------------------------------------
     # Core TTS
@@ -179,6 +223,7 @@ class TTSEngine:
         self,
         token_stream: Generator[str, None, None],
         latency=None,
+        pre_proc: subprocess.Popen | None = None,
     ) -> Generator[str, None, None]:
         """Consume a token stream, buffer sentences, and speak each one as soon as ready.
 
@@ -190,6 +235,8 @@ class TTSEngine:
         Args:
             token_stream: generator yielding text tokens from the LLM.
             latency: optional LatencyRecord to track TTS first-chunk timing.
+            pre_proc: optional Popen for a thinking sound playing in parallel.
+                      Waited on before the first TTS sentence plays to prevent overlap.
 
         Usage:
             for text in tts.stream_speak(llm_token_generator):
@@ -221,6 +268,11 @@ class TTSEngine:
                         log.debug(f"TTS sentence: '{complete}'")
                         wav_data, synth_time = self.synthesize(complete)
 
+                        # Before first TTS playback, wait for thinking sound to finish
+                        if pre_proc is not None:
+                            self._wait_for_playback(pre_proc)
+                            pre_proc = None
+
                         # Wait for previous playback, then start new one (non-blocking)
                         if not self._wait_for_playback(play_proc):
                             break  # Interrupted during wait
@@ -239,6 +291,10 @@ class TTSEngine:
             if remaining:
                 log.debug(f"TTS remainder: '{remaining}'")
                 wav_data, _ = self.synthesize(remaining)
+                # In case no sentence boundary was hit, still wait for thinking sound
+                if pre_proc is not None:
+                    self._wait_for_playback(pre_proc)
+                    pre_proc = None
                 if self._wait_for_playback(play_proc):
                     play_proc = self._start_playback(wav_data)
 
