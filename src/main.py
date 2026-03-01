@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from src.config import load_config
-from src.memory import MemoryStore
+from src.memory import MarkdownMemoryStore
 from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
 from src.stt.engine import STTEngine
 from src.tts.engine import TTSEngine
@@ -40,13 +40,13 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
     model_cfg = llm_cfg["local"]
 
     # Remote backend (GPU PC)
+    # System prompt is now built dynamically per-turn by MarkdownMemoryStore
     backends["remote"] = OllamaBackend(
         model=model_cfg["model"],
         base_url=remote_url,
         temperature=model_cfg["temperature"],
         num_ctx=model_cfg["num_ctx"],
         num_thread=model_cfg.get("num_thread"),
-        system_prompt=model_cfg["system_prompt"],
         think=model_cfg.get("think", False),
         label="remote",
     )
@@ -58,7 +58,6 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
         temperature=model_cfg["temperature"],
         num_ctx=model_cfg["num_ctx"],
         num_thread=model_cfg.get("num_thread"),
-        system_prompt=model_cfg["system_prompt"],
         think=model_cfg.get("think", False),
         label="local",
     )
@@ -355,16 +354,13 @@ def assistant_loop(cfg: dict):
         default_backend_key=default_key,
     )
 
-    # Persistent memory (SQLite-backed, crash-safe)
-    memory = MemoryStore()
+    # Persistent memory (.md files for profile/facts, SQLite for sessions)
+    memory = MarkdownMemoryStore()
     memory.close_stale_sessions()  # close any sessions left open from crash/restart
     current_session_id = memory.open_session()
 
     register_tool("remember", lambda fact: memory.remember(fact))
-    register_tool("recall", lambda query: memory.recall(query))
-    register_tool("my_memory", lambda: memory.list_memory())
-
-    base_system_prompt = cfg["llm"]["local"]["system_prompt"]
+    register_tool("recall", lambda query="": memory.recall(query))
 
     # Conversation history
     conversation: list[dict] = []
@@ -403,7 +399,7 @@ def assistant_loop(cfg: dict):
                     if new_sid is not None:
                         current_session_id = new_sid
                     _handle_interaction(
-                        stt, tts, router, backends, base_system_prompt,
+                        stt, tts, router, backends,
                         conversation, cfg, memory=memory, text=user_text,
                     )
                     last_interaction_time = time.time()
@@ -418,7 +414,7 @@ def assistant_loop(cfg: dict):
                 if new_sid is not None:
                     current_session_id = new_sid
                 _handle_interaction(
-                    stt, tts, router, backends, base_system_prompt,
+                    stt, tts, router, backends,
                     conversation, cfg, memory=memory, wake_detector=wake_detector,
                 )
                 last_interaction_time = time.time()
@@ -431,7 +427,7 @@ def assistant_loop(cfg: dict):
                     if new_sid is not None:
                         current_session_id = new_sid
                     _handle_interaction(
-                        stt, tts, router, backends, base_system_prompt,
+                        stt, tts, router, backends,
                         conversation, cfg, memory=memory,
                     )
                     last_interaction_time = time.time()
@@ -445,7 +441,7 @@ def assistant_loop(cfg: dict):
 
 
 def _handle_interaction(
-    stt, tts, router, backends, base_system_prompt, conversation, cfg,
+    stt, tts, router, backends, conversation, cfg,
     *, memory=None, wake_detector=None, text=None,
 ):
     """Handle one full interaction cycle."""
@@ -483,11 +479,7 @@ def _handle_interaction(
     conversation.append({"role": "user", "content": decision.cleaned_text})
     recent = conversation[-10:]  # Last 5 turns
 
-    system_prompt = base_system_prompt
-    if memory:
-        memory_section = memory.build_prompt_section()
-        if memory_section:
-            system_prompt = base_system_prompt + memory_section
+    system_prompt = memory.build_system_prompt() if memory else ""
 
     # 4. Start interrupt listener (background wake word detection during TTS)
     #    Started AFTER STT so mic is free.

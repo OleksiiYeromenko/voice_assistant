@@ -1,25 +1,30 @@
-"""Persistent memory — SQLite-backed store for preferences, facts, and sessions.
+"""Persistent memory — markdown files for personality/profile/facts, SQLite for sessions.
 
-Data is stored in data/memory.db (WAL mode for crash safety on Raspberry Pi).
-Memory is injected into the system prompt so the LLM has context about the user.
+Architecture (CLAUDE.md-inspired):
+  memory/PERSONA.md  — Assistant identity, rules, tool instructions (read-only at runtime)
+  memory/PROFILE.md  — User preferences as key-value pairs (written by remember tool)
+  memory/FACTS.md    — Known facts about the user (appended by remember tool)
+  data/memory.db     — Session summaries only (SQLite, WAL mode)
 
-On first run, automatically migrates data from the old data/memory.json if present.
+On first run, migrates data from old SQLite preferences/facts tables if present.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import os
 import re
 import sqlite3
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+DEFAULT_MEMORY_DIR = Path("memory")
 DEFAULT_DB_PATH = Path("data/memory.db")
-DEFAULT_JSON_PATH = Path("data/memory.json")
 MAX_PROMPT_FACTS = 10
+MAX_STORED_FACTS = 100
 MAX_STORED_SESSIONS = 50
 
 # ---------------------------------------------------------------------------
@@ -70,20 +75,7 @@ _PREFERENCE_INSTRUCTIONS: dict[str, dict[str, str]] = {
     },
 }
 
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS preferences (
-    key        TEXT PRIMARY KEY,
-    value      TEXT NOT NULL,
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f','now','localtime'))
-);
-
-CREATE TABLE IF NOT EXISTS facts (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    text       TEXT NOT NULL,
-    source     TEXT NOT NULL DEFAULT 'user_requested',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f','now','localtime'))
-);
-
+_SESSIONS_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     summary    TEXT,
@@ -95,131 +87,197 @@ CREATE TABLE IF NOT EXISTS sessions (
 """
 
 
-class MemoryStore:
-    def __init__(self, db_path: Path = DEFAULT_DB_PATH):
-        self._db_path = db_path
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = self._connect()
+class MarkdownMemoryStore:
+    """Markdown-file + SQLite memory store.
+
+    .md files hold personality, user profile, and facts (human-readable, git-friendly).
+    SQLite holds session data only.
+    """
+
+    def __init__(
+        self,
+        memory_dir: Path = DEFAULT_MEMORY_DIR,
+        db_path: Path = DEFAULT_DB_PATH,
+    ):
+        self._memory_dir = Path(memory_dir)
+        self._persona_path = self._memory_dir / "PERSONA.md"
+        self._profile_path = self._memory_dir / "PROFILE.md"
+        self._facts_path = self._memory_dir / "FACTS.md"
+
+        # Ensure directories exist
+        self._memory_dir.mkdir(parents=True, exist_ok=True)
+        db_path = Path(db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Load persona (cached, immutable at runtime)
+        if self._persona_path.exists():
+            self._persona = self._persona_path.read_text().strip()
+        else:
+            self._persona = ""
+            log.warning(f"Persona file not found: {self._persona_path}")
+
+        # SQLite for sessions only
+        self._conn = self._connect(db_path)
         self._create_tables()
-        self._maybe_migrate_json()
+
+        # Migrate from old SQLite preferences/facts if .md files are empty
+        self._maybe_migrate_sqlite()
 
     # ------------------------------------------------------------------
-    # Internal: connection and schema
+    # Internal: SQLite connection
     # ------------------------------------------------------------------
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+    def _connect(self, db_path: Path) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row
         return conn
 
     def _create_tables(self):
-        self._conn.executescript(_SCHEMA_SQL)
+        self._conn.executescript(_SESSIONS_SQL)
         self._conn.commit()
 
     # ------------------------------------------------------------------
-    # Migration from legacy JSON
+    # Migration: old SQLite preferences/facts → .md files
     # ------------------------------------------------------------------
-    def _maybe_migrate_json(self):
-        """One-time import from data/memory.json if it exists and DB is empty."""
-        json_path = self._db_path.parent / "memory.json"
-        if not json_path.exists():
-            return
+    def _maybe_migrate_sqlite(self):
+        """One-time migration from old SQLite preferences/facts tables to .md files."""
+        # Only migrate if PROFILE.md has no entries yet
+        profile = self._read_profile()
+        if profile:
+            return  # Already has data, skip migration
 
-        # Only migrate if DB tables are empty (idempotent)
-        fact_count = self._conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
-        pref_count = self._conn.execute("SELECT COUNT(*) FROM preferences").fetchone()[0]
-        if fact_count > 0 or pref_count > 0:
-            return
+        # Check if old tables exist
+        tables = {
+            r[0]
+            for r in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
 
-        try:
-            data = json.loads(json_path.read_text())
-        except (json.JSONDecodeError, OSError) as e:
-            log.warning(f"Could not read memory.json for migration: {e}")
-            return
+        migrated = False
 
-        log.info("Migrating memory.json -> SQLite...")
+        # Migrate preferences → PROFILE.md
+        if "preferences" in tables:
+            rows = self._conn.execute("SELECT key, value FROM preferences").fetchall()
+            if rows:
+                data = {r["key"]: r["value"] for r in rows}
+                self._write_profile(data)
+                log.info(f"Migrated {len(rows)} preferences to PROFILE.md")
+                migrated = True
 
-        # Migrate user profile
-        profile = data.get("user_profile", {})
-        if profile.get("name"):
-            self.set_preference("user_name", profile["name"])
-        for key, val in profile.get("preferences", {}).items():
-            self.set_preference(key, str(val))
+        # Migrate facts → FACTS.md
+        if "facts" in tables:
+            rows = self._conn.execute(
+                "SELECT text, created_at FROM facts ORDER BY id"
+            ).fetchall()
+            if rows:
+                lines = []
+                for r in rows:
+                    date = (r["created_at"] or "")[:10]
+                    lines.append(f"- {r['text']} ({date})")
+                # Write all facts at once
+                self._facts_path.write_text(
+                    "# Known Facts\n\n" + "\n".join(lines) + "\n"
+                )
+                log.info(f"Migrated {len(rows)} facts to FACTS.md")
+                migrated = True
 
-        # Migrate facts
-        for f in data.get("facts", []):
-            self._conn.execute(
-                "INSERT INTO facts (text, source, created_at) VALUES (?, ?, ?)",
-                (f["text"], f.get("source", "migrated"), f.get("timestamp", datetime.now().isoformat())),
-            )
-
-        # Migrate session summaries
-        for s in data.get("session_summaries", []):
-            ts = s.get("timestamp", datetime.now().isoformat())
-            self._conn.execute(
-                "INSERT INTO sessions (summary, status, started_at, ended_at) VALUES (?, 'closed', ?, ?)",
-                (s["summary"], ts, ts),
-            )
-
-        self._conn.commit()
-
-        # Rename old file so migration won't run again
-        backup = json_path.with_suffix(".json.bak")
-        json_path.rename(backup)
-        log.info(f"Migration complete. Old file renamed to {backup}")
+        if migrated:
+            log.info("SQLite → Markdown migration complete. Old tables left intact as backup.")
 
     # ------------------------------------------------------------------
-    # Preferences
+    # PROFILE.md — user preferences (key-value)
     # ------------------------------------------------------------------
-    def set_preference(self, key: str, value: str):
-        """Store or update a user preference."""
-        self._conn.execute(
-            "INSERT OR REPLACE INTO preferences (key, value, updated_at) VALUES (?, ?, ?)",
-            (key, value, datetime.now().isoformat()),
-        )
-        self._conn.commit()
-        log.info(f"Memory: set preference {key}={value}")
+    def _read_profile(self) -> dict[str, str]:
+        """Parse PROFILE.md into a dict of key-value pairs."""
+        if not self._profile_path.exists():
+            return {}
 
-    def get_preference(self, key: str) -> str | None:
-        """Get a single preference value, or None if not set."""
-        row = self._conn.execute(
-            "SELECT value FROM preferences WHERE key = ?", (key,)
-        ).fetchone()
-        return row["value"] if row else None
+        data: dict[str, str] = {}
+        for line in self._profile_path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("- ") and ":" in line:
+                key, _, value = line[2:].partition(":")
+                data[key.strip()] = value.strip()
+        return data
 
-    def get_all_preferences(self) -> dict[str, str]:
-        """Get all stored preferences as a dict."""
-        rows = self._conn.execute("SELECT key, value FROM preferences").fetchall()
-        return {r["key"]: r["value"] for r in rows}
+    def _write_profile(self, data: dict[str, str]):
+        """Atomic write of profile data to PROFILE.md."""
+        lines = ["# User Profile\n"]
+        for key, val in data.items():
+            lines.append(f"- {key}: {val}")
+        content = "\n".join(lines) + "\n"
+        self._atomic_write(self._profile_path, content)
+        log.info(f"Updated PROFILE.md ({len(data)} entries)")
 
-    def set_user_name(self, name: str):
-        """Convenience: store user name as a preference."""
-        self.set_preference("user_name", name)
+    def _set_preference(self, key: str, value: str):
+        """Update a single preference in PROFILE.md."""
+        profile = self._read_profile()
+        profile[key] = value
+        self._write_profile(profile)
 
     # ------------------------------------------------------------------
-    # Facts
+    # FACTS.md — known facts about the user
     # ------------------------------------------------------------------
-    def add_fact(self, text: str, source: str = "user_requested") -> str:
-        """Add a fact to long-term memory. Returns confirmation message."""
-        self._conn.execute(
-            "INSERT INTO facts (text, source) VALUES (?, ?)",
-            (text, source),
-        )
-        self._conn.commit()
+    def _read_all_facts(self) -> list[str]:
+        """Read all fact lines from FACTS.md."""
+        if not self._facts_path.exists():
+            return []
+
+        facts = []
+        for line in self._facts_path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("- "):
+                facts.append(line[2:])
+        return facts
+
+    def _read_recent_facts(self, limit: int = MAX_PROMPT_FACTS) -> list[str]:
+        """Read the most recent N facts from FACTS.md."""
+        all_facts = self._read_all_facts()
+        return all_facts[-limit:]
+
+    def _append_fact(self, text: str) -> str:
+        """Append a fact to FACTS.md with today's date."""
+        date = datetime.now().strftime("%Y-%m-%d")
+        line = f"- {text} ({date})\n"
+
+        # Ensure file exists with header
+        if not self._facts_path.exists():
+            self._facts_path.write_text("# Known Facts\n\n")
+
+        with open(self._facts_path, "a") as f:
+            f.write(line)
+
         log.info(f"Memory: stored fact '{text}'")
+
+        # Prune if over limit
+        all_facts = self._read_all_facts()
+        if len(all_facts) > MAX_STORED_FACTS:
+            pruned = all_facts[-MAX_STORED_FACTS:]
+            content = "# Known Facts\n\n" + "\n".join(f"- {f}" for f in pruned) + "\n"
+            self._atomic_write(self._facts_path, content)
+            log.info(f"Pruned FACTS.md to {MAX_STORED_FACTS} entries")
+
         return f"I'll remember that: {text}"
 
-    def get_facts(self, limit: int = MAX_PROMPT_FACTS) -> list[dict]:
-        """Get most recent facts (chronological order)."""
-        rows = self._conn.execute(
-            "SELECT text, source, created_at FROM facts ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [dict(r) for r in reversed(rows)]
+    # ------------------------------------------------------------------
+    # Atomic file write (crash-safe on Pi)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _atomic_write(path: Path, content: str):
+        """Write content to a file atomically using temp file + rename."""
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(content)
+            os.replace(tmp_path, path)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
 
     # ------------------------------------------------------------------
-    # Sessions
+    # Sessions (SQLite — same as before)
     # ------------------------------------------------------------------
     def open_session(self) -> int:
         """Open a new session. Returns session ID."""
@@ -251,11 +309,6 @@ class MemoryStore:
             self.close_session(row["id"], summary=None)
             log.info(f"Closed stale session {row['id']} from previous run")
 
-    def add_session_summary(self, summary: str):
-        """Legacy compatibility: creates and closes a session with summary in one call."""
-        sid = self.open_session()
-        self.close_session(sid, summary=summary)
-
     def get_latest_summary(self) -> dict | None:
         """Get the most recent closed session with a summary."""
         row = self._conn.execute(
@@ -277,10 +330,49 @@ class MemoryStore:
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
-    # Recall tool — search past sessions
+    # Tool: remember — classify and store preference or fact
     # ------------------------------------------------------------------
-    def recall(self, query: str) -> str:
-        """Search past sessions for relevant summaries. Called by recall tool."""
+    def remember(self, text: str) -> str:
+        """Classify text as name, preference, or fact, then store accordingly.
+
+        Called by the 'remember' tool. Uses zero-cost regex patterns to detect
+        preferences before falling back to generic fact storage.
+        """
+        # 1. Check for name
+        for pattern in _NAME_PATTERNS:
+            m = pattern.search(text)
+            if m:
+                name = m.group(1).strip().title()
+                self._set_preference("user_name", name)
+                return f"Got it, I'll remember your name is {name}."
+
+        # 2. Check for preference
+        for pattern, pref_key in _PREFERENCE_PATTERNS:
+            if pattern.search(text):
+                if pref_key == "_generic_preference":
+                    pref_key = f"pref_{abs(hash(text.lower().strip())) % 10000}"
+                self._set_preference(pref_key, text)
+                return f"Preference saved: {text}"
+
+        # 3. Default: store as a fact
+        return self._append_fact(text)
+
+    # ------------------------------------------------------------------
+    # Tool: recall — search past sessions OR list user profile
+    # ------------------------------------------------------------------
+    def recall(self, query: str = "") -> str:
+        """Search past sessions or list all known user info.
+
+        Called by the 'recall' tool.
+        - Empty query or 'profile'/'all'/'me' → list all preferences + facts
+        - Keyword query → search past session summaries
+        """
+        q = query.strip().lower()
+
+        if not q or q in ("profile", "all", "me", "my profile", "preferences"):
+            return self._format_full_memory()
+
+        # Search past sessions
         results = self.search_sessions(query, limit=5)
         if not results:
             return "I don't have any past conversations matching that query."
@@ -297,28 +389,22 @@ class MemoryStore:
 
         return "Past conversations:\n" + "\n".join(lines)
 
-    # ------------------------------------------------------------------
-    # List memory — for the my_memory tool
-    # ------------------------------------------------------------------
-    def list_memory(self) -> str:
-        """Format all stored preferences and facts for voice output.
-
-        Called by the 'my_memory' tool when user asks "what do you know about me?"
-        """
+    def _format_full_memory(self) -> str:
+        """Format all stored preferences and facts for voice output."""
         parts: list[str] = []
 
-        prefs = self.get_all_preferences()
-        if prefs:
+        profile = self._read_profile()
+        if profile:
             parts.append("Your preferences:")
-            for key, val in prefs.items():
+            for key, val in profile.items():
                 label = key.replace("_", " ")
                 parts.append(f"- {label}: {val}")
 
-        facts = self.get_facts(limit=20)
+        facts = self._read_all_facts()
         if facts:
             parts.append("Things I remember about you:")
             for f in facts:
-                parts.append(f"- {f['text']}")
+                parts.append(f"- {f}")
 
         if not parts:
             return "I don't have any stored preferences or facts about you yet."
@@ -326,86 +412,55 @@ class MemoryStore:
         return "\n".join(parts)
 
     # ------------------------------------------------------------------
-    # Remember — unified entry point (classifies preference vs fact)
+    # System prompt assembly
     # ------------------------------------------------------------------
-    def remember(self, text: str) -> str:
-        """Classify text as name, preference, or fact, then store accordingly.
+    def build_system_prompt(self) -> str:
+        """Assemble the full system prompt from .md files + session data.
 
-        Called by the 'remember' tool.  Uses zero-cost regex patterns to detect
-        preferences before falling back to generic fact storage.
+        Token budget: ~370 tokens total
+          PERSONA.md:  ~200 tokens
+          Profile:     ~40 tokens (preferences as imperatives)
+          Facts:       ~100 tokens (last 10)
+          Session:     ~30 tokens (latest summary)
         """
-        # 1. Check for name
-        for pattern in _NAME_PATTERNS:
-            m = pattern.search(text)
-            if m:
-                name = m.group(1).strip().title()
-                self.set_preference("user_name", name)
-                return f"Got it, I'll remember your name is {name}."
+        parts = [self._persona]
 
-        # 2. Check for preference
-        for pattern, pref_key in _PREFERENCE_PATTERNS:
-            if pattern.search(text):
-                if pref_key == "_generic_preference":
-                    # Store generic preferences with a hash-based key
-                    pref_key = f"pref_{abs(hash(text.lower().strip())) % 10000}"
-                self.set_preference(pref_key, text)
-                return f"Preference saved: {text}"
-
-        # 3. Default: store as a fact
-        return self.add_fact(text, source="user_requested")
-
-    # ------------------------------------------------------------------
-    # System prompt injection
-    # ------------------------------------------------------------------
-    def build_prompt_section(self) -> str:
-        """Build a compact memory section for the system prompt.
-
-        Token budget target: ~150 tokens for 3B model context efficiency.
-        - Preferences -> imperative instructions (highest priority)
-        - Facts -> last 10
-        - Session summary -> only the latest 1
-        """
-        parts: list[str] = []
-
-        # 1. Preferences as imperative instructions
-        prefs = self.get_all_preferences()
-        user_name = prefs.pop("user_name", None)
+        # User profile as imperative instructions
+        profile = self._read_profile()
+        user_name = profile.pop("user_name", None)
+        user_lines: list[str] = []
         if user_name:
-            parts.append(f"User's name: {user_name}")
-
-        if prefs:
-            parts.append("User preferences (ALWAYS follow these):")
-            for key, val in prefs.items():
+            user_lines.append(f"User's name: {user_name}")
+        if profile:
+            user_lines.append("User preferences (ALWAYS follow these):")
+            for key, val in profile.items():
                 instruction = self._preference_to_instruction(key, val)
-                parts.append(f"- {instruction}")
+                user_lines.append(f"- {instruction}")
+        if user_lines:
+            parts.append("\n## User\n" + "\n".join(user_lines))
 
-        # 2. Known facts (compact)
-        facts = self.get_facts()
+        # Known facts (last N)
+        facts = self._read_recent_facts()
         if facts:
-            parts.append("Known facts:")
-            for f in facts:
-                parts.append(f"- {f['text']}")
+            fact_lines = "\n".join(f"- {f}" for f in facts)
+            parts.append(f"\n## Known Facts\n{fact_lines}")
 
-        # 3. Latest session summary only
+        # Latest session summary
         latest = self.get_latest_summary()
         if latest and latest.get("summary"):
-            parts.append(f"Last conversation: {latest['summary']}")
+            parts.append(f"\n## Last Conversation\n{latest['summary']}")
 
-        if not parts:
-            return ""
-        return "\n\n## Memory\n" + "\n".join(parts)
+        return "\n".join(parts)
 
     @staticmethod
     def _preference_to_instruction(key: str, value: str) -> str:
         """Convert a stored preference into an imperative system prompt instruction."""
-        # Check lookup table for well-known preference keys
         if key in _PREFERENCE_INSTRUCTIONS:
             val_lower = value.lower()
             for sub_key, instruction in _PREFERENCE_INSTRUCTIONS[key].items():
                 if sub_key in val_lower:
                     return instruction
 
-        # For generic or unrecognized preferences, use the stored text directly
         if value.lower().startswith(("always", "never")):
             return value
         return f"ALWAYS: {value}"
