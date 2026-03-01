@@ -94,9 +94,8 @@ class OllamaBackend:
         """Preload model into memory and prime the KV cache.
 
         Uses the real num_ctx so the first user query doesn't pay
-        a ~3-4s KV-cache allocation penalty.
-        Set OLLAMA_KEEP_ALIVE=-1 in the Ollama systemd service to keep
-        the model loaded between requests.
+        a ~3-4s KV-cache allocation penalty.  Sets keep_alive=-1 so
+        Ollama keeps the model loaded indefinitely (no 5-min timeout).
         """
         try:
             log.info(f"Warming up {self._model}...")
@@ -111,6 +110,7 @@ class OllamaBackend:
                 model=self._model,
                 messages=[{"role": "user", "content": "hi"}],
                 options=options,
+                keep_alive=-1,
             )
             elapsed = time.perf_counter() - start
             log.info(f"Model {self._model} warm in {elapsed:.1f}s")
@@ -143,6 +143,7 @@ class OllamaBackend:
             "stream": True,
             "options": options,
             "think": self._think,
+            "keep_alive": -1,
         }
         if tools:
             kwargs["tools"] = tools
