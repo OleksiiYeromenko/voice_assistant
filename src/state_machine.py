@@ -1,0 +1,312 @@
+"""Finite State Machine for voice assistant orchestration.
+
+Replaces the procedural loop in main.py with explicit states and transitions.
+Each state manages its own resource lifecycle (mic ownership, threads, etc.).
+
+States:
+    IDLE           — waiting for wake word / keypress / text input
+    SESSION_CHECK  — check inactivity timeout, rotate session if expired
+    LISTENING      — STT: record + transcribe (mic owned by STT)
+    THINKING       — route + LLM + tool loop + streaming TTS
+    INTERRUPTED    — TTS aborted by wake word, transition to LISTENING
+    SHUTDOWN       — close session, exit
+"""
+
+import logging
+import sys
+import threading
+import time
+from enum import Enum, auto
+
+log = logging.getLogger(__name__)
+
+
+class State(Enum):
+    IDLE = auto()
+    SESSION_CHECK = auto()
+    LISTENING = auto()
+    THINKING = auto()
+    INTERRUPTED = auto()
+    SHUTDOWN = auto()
+
+
+class InputMode(Enum):
+    WAKE_WORD = auto()
+    KEYBOARD = auto()
+    TEXT = auto()
+
+
+class AssistantFSM:
+    """Finite state machine orchestrating the voice assistant pipeline.
+
+    Each ``_state_*()`` method returns ``(next_state, ctx)`` where *ctx* is a
+    dict carrying data between states (e.g. transcribed text, latency record).
+    """
+
+    def __init__(self, cfg, stt, tts, backends, router, memory, wake_detector=None):
+        self.cfg = cfg
+        self.stt = stt
+        self.tts = tts
+        self.backends = backends
+        self.router = router
+        self.memory = memory
+        self.wake_detector = wake_detector
+
+        self.conversation: list[dict] = []
+        self.last_interaction_time: float | None = None
+        self.session_id: int = memory.open_session()
+
+        # Determine input mode
+        if "--text" in sys.argv:
+            self.input_mode = InputMode.TEXT
+        elif "--no-wake" in sys.argv or wake_detector is None:
+            self.input_mode = InputMode.KEYBOARD
+        else:
+            self.input_mode = InputMode.WAKE_WORD
+
+        # For wake word mode, store the listen() generator
+        self._wake_gen = None
+        if self.input_mode == InputMode.WAKE_WORD:
+            self._wake_gen = self.wake_detector.listen()
+
+        # State handler dispatch table
+        self._handlers = {
+            State.IDLE: self._state_idle,
+            State.SESSION_CHECK: self._state_session_check,
+            State.LISTENING: self._state_listening,
+            State.THINKING: self._state_thinking,
+            State.INTERRUPTED: self._state_interrupted,
+            State.SHUTDOWN: self._state_shutdown,
+        }
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+    def run(self):
+        """Dispatch to state handlers until SHUTDOWN."""
+        state = State.IDLE
+        ctx: dict = {}
+
+        log.info(f"FSM started (input_mode={self.input_mode.name})")
+
+        try:
+            while state != State.SHUTDOWN:
+                handler = self._handlers[state]
+                prev = state
+                state, ctx = handler(ctx)
+                if state != prev:
+                    log.info(f"State: {prev.name} → {state.name}")
+        finally:
+            self.memory.close_session(self.session_id)
+            log.info("Session closed on shutdown.")
+
+    # ------------------------------------------------------------------
+    # State: IDLE
+    # ------------------------------------------------------------------
+    def _state_idle(self, ctx: dict) -> tuple[State, dict]:
+        """Wait for user trigger based on input mode."""
+        if self.input_mode == InputMode.TEXT:
+            try:
+                text = input("\n[Type message] ").strip()
+                if not text:
+                    return State.IDLE, {}
+                return State.SESSION_CHECK, {"text": text}
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                return State.SHUTDOWN, {}
+
+        elif self.input_mode == InputMode.KEYBOARD:
+            try:
+                input("\n[Press Enter to speak] ")
+                return State.SESSION_CHECK, {}
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                return State.SHUTDOWN, {}
+
+        else:  # WAKE_WORD
+            try:
+                next(self._wake_gen)  # blocks until detection; mic released on return
+                self.tts.play_greeting()
+                return State.SESSION_CHECK, {}
+            except (StopIteration, KeyboardInterrupt):
+                return State.SHUTDOWN, {}
+
+    # ------------------------------------------------------------------
+    # State: SESSION_CHECK
+    # ------------------------------------------------------------------
+    def _state_session_check(self, ctx: dict) -> tuple[State, dict]:
+        """Check inactivity timeout and rotate session if expired."""
+        from src.main import _maybe_end_session
+
+        new_sid = _maybe_end_session(
+            self.conversation, self.memory, self.backends,
+            self.cfg, self.last_interaction_time, self.session_id,
+        )
+        if new_sid is not None:
+            self.session_id = new_sid
+
+        # --text mode provides text directly; skip LISTENING
+        if "text" in ctx:
+            return State.THINKING, ctx
+        return State.LISTENING, ctx
+
+    # ------------------------------------------------------------------
+    # State: LISTENING
+    # ------------------------------------------------------------------
+    def _state_listening(self, ctx: dict) -> tuple[State, dict]:
+        """Record and transcribe speech via STT."""
+        from src.monitor import LatencyRecord, Timer
+
+        latency = ctx.get("latency", LatencyRecord())
+
+        with Timer() as stt_timer:
+            text, rec_time, trans_time = self.stt.record_and_transcribe(
+                silence_timeout_s=self.cfg["stt"]["silence_timeout_s"],
+            )
+        latency.stt_ms = stt_timer.elapsed_ms
+
+        if not text:
+            log.info("No speech detected.")
+            return State.IDLE, {}
+
+        return State.THINKING, {"text": text, "latency": latency}
+
+    # ------------------------------------------------------------------
+    # State: THINKING
+    # ------------------------------------------------------------------
+    def _state_thinking(self, ctx: dict) -> tuple[State, dict]:
+        """Route, run LLM with tools, stream TTS. Handle interruption."""
+        from src.llm.backends import OllamaBackend
+        from src.main import run_llm_with_tools, run_streaming_llm
+        from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
+        from src.tools.executor import ALL_TOOLS, VOLATILE_TOOLS
+
+        text = ctx["text"]
+        latency = ctx.get("latency", LatencyRecord())
+        start = time.perf_counter()
+
+        print(f"\n🎤 You: {text}")
+
+        # Thinking sound — plays in parallel with LLM processing
+        thinking_proc = self.tts.play_thinking()
+
+        # Route
+        with Timer() as route_timer:
+            decision = self.router.route(text)
+        latency.router_ms = route_timer.elapsed_ms
+
+        backend = self.router.get_backend(decision.backend_key)
+        log.info(f"Router: {decision.reason} → {backend.name}")
+
+        if not isinstance(backend, OllamaBackend):
+            print(f"  [Using {decision.backend_key}]")
+        elif decision.backend_key != self.router.default_backend_key:
+            print(f"  [Using {decision.backend_key} ollama]")
+
+        # Build messages with memory context
+        self.conversation.append({"role": "user", "content": decision.cleaned_text})
+        recent = self.conversation[-10:]
+        system_prompt = self.memory.build_system_prompt() if self.memory else ""
+
+        # Start interrupt listener (wake word mode only)
+        interrupt_thread = None
+        interrupt_stop = None
+        interrupted = False
+
+        if self.wake_detector is not None:
+            interrupt_stop = threading.Event()
+
+            def _listen():
+                nonlocal interrupted
+                try:
+                    if self.wake_detector.detect_once(timeout_s=120, stop_event=interrupt_stop):
+                        log.info("Wake word during TTS — interrupting")
+                        interrupted = True
+                        self.tts.interrupt()
+                except Exception as e:
+                    log.debug(f"Interrupt listener error: {e}")
+
+            interrupt_thread = threading.Thread(
+                target=_listen, daemon=True, name="interrupt-listener",
+            )
+            interrupt_thread.start()
+
+        # LLM + Tools + TTS
+        tools_used: set[str] = set()
+        try:
+            if isinstance(backend, OllamaBackend):
+                response, tools_used = run_llm_with_tools(
+                    backend, list(recent), ALL_TOOLS, system_prompt,
+                    self.tts, latency, thinking_proc=thinking_proc,
+                )
+            else:
+                response, tools_used = run_streaming_llm(
+                    backend, list(recent), ALL_TOOLS, system_prompt,
+                    self.tts, latency, thinking_proc=thinking_proc,
+                )
+        except Exception as e:
+            log.error(f"LLM failed: {e}")
+            fallback = self.router.get_fallback(decision.backend_key)
+            if fallback:
+                print(f"  [Falling back to {fallback.name}]")
+                try:
+                    if isinstance(fallback, OllamaBackend):
+                        response, tools_used = run_llm_with_tools(
+                            fallback, list(recent), ALL_TOOLS, system_prompt,
+                            self.tts, latency, thinking_proc=thinking_proc,
+                        )
+                    else:
+                        response, tools_used = run_streaming_llm(
+                            fallback, list(recent), ALL_TOOLS, system_prompt,
+                            self.tts, latency, thinking_proc=thinking_proc,
+                        )
+                except Exception:
+                    response = "Sorry, I'm having trouble right now."
+                    self.tts.speak(response)
+            else:
+                response = "Sorry, I'm having trouble right now."
+                self.tts.speak(response)
+        finally:
+            # CRITICAL: stop interrupt listener before returning so its arecord
+            # releases the mic. Otherwise listen() can't reopen the device.
+            if interrupt_thread is not None:
+                interrupt_stop.set()
+                interrupt_thread.join(timeout=2)
+
+        # Store response in conversation history
+        if tools_used & VOLATILE_TOOLS:
+            self.conversation.pop()  # Remove user message — no stale data in context
+        else:
+            self.conversation.append({"role": "assistant", "content": response})
+
+        # Metrics
+        latency.total_ms = (time.perf_counter() - start) * 1000
+        print(f"  📊 {latency.summary()}")
+        snap = snapshot()
+        log.info(f"Resources: {snap.summary()}")
+        thresholds = self.cfg.get("monitor", {}).get("thresholds", {})
+        if thresholds:
+            alerts = check_thresholds(snap, thresholds)
+            for alert in alerts:
+                print(f"  ⚠️  {alert}")
+
+        self.last_interaction_time = time.time()
+
+        if interrupted:
+            return State.INTERRUPTED, {}
+        return State.IDLE, {}
+
+    # ------------------------------------------------------------------
+    # State: INTERRUPTED
+    # ------------------------------------------------------------------
+    def _state_interrupted(self, ctx: dict) -> tuple[State, dict]:
+        """TTS was interrupted by wake word — go straight to LISTENING."""
+        log.info("Interrupted — listening for new query")
+        return State.LISTENING, {}
+
+    # ------------------------------------------------------------------
+    # State: SHUTDOWN
+    # ------------------------------------------------------------------
+    def _state_shutdown(self, ctx: dict) -> tuple[State, dict]:
+        """Terminal state. Cleanup handled by run()'s finally block."""
+        return State.SHUTDOWN, {}

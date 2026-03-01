@@ -10,6 +10,45 @@ Mic → Wake Word (openWakeWord) → STT (faster-whisper)
    → Tool Executor → Streaming TTS (Piper) → Speaker
 ```
 
+### State Machine
+
+The assistant runs as a finite state machine with explicit states and transitions:
+
+```
+                    ┌──────────┐
+          Ctrl+C    │ SHUTDOWN │
+         ┌─────────→│          │
+         │          └──────────┘
+         │
+    ┌────┴───┐   wake / key / text   ┌───────────────┐
+    │  IDLE  │──────────────────────→│ SESSION_CHECK  │
+    └────────┘                       └───┬───────┬────┘
+         ↑                               │       │
+         │                          text input  otherwise
+         │                               │       │
+         │                               ↓       ↓
+         │                       ┌──────────┐  ┌───────────┐
+         │       no speech       │ THINKING │←─│ LISTENING  │
+         │       ┌───────────────│          │  └───────────┘
+         │       │               └──┬────┬──┘      ↑
+         │       │          done    │    │ wake     │
+         └───────┘       ┌─────────┘    │ word     │
+                         │              ↓          │
+                         │       ┌─────────────┐   │
+                         │       │ INTERRUPTED  │──┘
+                         │       └─────────────┘
+                         └→ IDLE
+```
+
+| State | What happens | Mic owner |
+|---|---|---|
+| IDLE | Wait for trigger (wake word / Enter / text) | Wake detector (wake mode) |
+| SESSION_CHECK | Check inactivity timeout, rotate session | None |
+| LISTENING | STT: record + transcribe | STT (arecord) |
+| THINKING | Route → LLM + tool loop + streaming TTS | Interrupt listener (wake mode) |
+| INTERRUPTED | TTS stopped, clean up | Releasing → free |
+| SHUTDOWN | Close session, exit | None |
+
 ## Quick Start
 
 ```bash
@@ -60,7 +99,8 @@ Cloud → local fallback happens automatically on network failure.
 voice-assistant/
 ├── config/config.yaml       # All configuration
 ├── src/
-│   ├── main.py              # Assistant loop
+│   ├── main.py              # Entry point + LLM streaming functions
+│   ├── state_machine.py     # FSM: states, transitions, orchestration
 │   ├── config.py            # Config loader
 │   ├── monitor.py           # CPU/RAM/temp tracking
 │   ├── wake_word/detector.py
