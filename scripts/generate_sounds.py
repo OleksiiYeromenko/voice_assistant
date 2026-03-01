@@ -24,25 +24,35 @@ DEFAULT_VOICE = "./voices/en_US-hfc_male-medium.onnx"
 # All default sounds: category → list of (filename, text) tuples
 DEFAULT_SOUNDS: dict[str, list[tuple[str, str]]] = {
     "startup": [
-        ("startup_01.wav", "Oh great, I'm awake again."),
+        ("startup_01.wav", "Booting up. Poondyk is here"),
     ],
     "greeting": [
         ("greeting_01.wav", "Yeah?"),
         ("greeting_02.wav", "What now?"),
         ("greeting_03.wav", "Go ahead."),
         ("greeting_04.wav", "I'm listening."),
-        ("greeting_05.wav", "Sure, speak."),
+        ("greeting_05.wav", "Sure. speak."),
         ("greeting_06.wav", "Uh huh?"),
         ("greeting_07.wav", "Hit me."),
+        ("greeting_08.wav", "Aha?"),
+        ("greeting_09.wav", "Speak."),
+        ("greeting_10.wav", "Huh?"),
+        ("greeting_11.wav", "And?"),
     ],
     "thinking": [
-        ("thinking_01.wav", "Mmm, let me think."),
+        ("thinking_01.wav", "Let me think."),
         ("thinking_02.wav", "Hang on."),
         ("thinking_03.wav", "Give me a second."),
-        ("thinking_04.wav", "Oh, that's a good one."),
+        ("thinking_04.wav", "Yeah, I'm on it."),
         ("thinking_05.wav", "Working on it."),
-        ("thinking_06.wav", "Right, right, right."),
-        ("thinking_07.wav", "Interesting."),
+        ("thinking_06.wav", "I hear you, give me a sec."),
+        ("thinking_07.wav", "Interesting. Let me see."),
+        ("thinking_08.wav", "Thinking."),
+        ("thinking_09.wav", "I hear you."),
+        ("thinking_10.wav", "Processing. Don't go anywhere."),
+        ("thinking_11.wav", "Processing."),
+
+        
     ],
 }
 
