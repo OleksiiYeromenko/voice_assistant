@@ -362,16 +362,20 @@ class MarkdownMemoryStore:
     # ------------------------------------------------------------------
     # System prompt assembly
     # ------------------------------------------------------------------
-    def build_system_prompt(self) -> str:
+    def build_system_prompt(self, model_info: str = "") -> str:
         """Assemble the full system prompt from .md files + session data.
 
-        Token budget: ~370 tokens total
+        Token budget: ~400 tokens total
           PERSONA.md:  ~200 tokens
           Profile:     ~40 tokens (preferences as imperatives)
           Facts:       ~100 tokens (last 10)
           Session:     ~30 tokens (latest summary)
+          Model info:  ~20 tokens
         """
         parts = [self._persona]
+
+        if model_info:
+            parts.append(f"\n## Current Model\n{model_info}")
 
         # User profile as imperative instructions
         profile = self._read_profile()

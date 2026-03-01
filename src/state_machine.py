@@ -206,7 +206,10 @@ class AssistantFSM:
         # Build messages with memory context
         self.conversation.append({"role": "user", "content": decision.cleaned_text})
         recent = self.conversation[-10:]
-        system_prompt = self.memory.build_system_prompt() if self.memory else ""
+
+        # Tell the model which backend it's running on
+        model_info = f"You are running as: {backend.name} (backend: {decision.backend_key})"
+        system_prompt = self.memory.build_system_prompt(model_info=model_info) if self.memory else ""
 
         # Start interrupt listener (wake word mode only)
         interrupt_thread = None
