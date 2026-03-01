@@ -268,9 +268,13 @@ class TTSEngine:
                         log.debug(f"TTS sentence: '{complete}'")
                         wav_data, synth_time = self.synthesize(complete)
 
+                        if self._interrupted:
+                            break  # Interrupted during synthesis — discard result
+
                         # Before first TTS playback, wait for thinking sound to finish
                         if pre_proc is not None:
-                            self._wait_for_playback(pre_proc)
+                            if not self._wait_for_playback(pre_proc):
+                                break  # Interrupted during thinking sound
                             pre_proc = None
 
                         # Wait for previous playback, then start new one (non-blocking)

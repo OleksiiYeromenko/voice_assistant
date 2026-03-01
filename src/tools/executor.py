@@ -270,13 +270,13 @@ def get_time(location: str = "") -> str:
 
     if not location or not location.strip():
         now = datetime.now()
-        return now.strftime("Local time: %A, %B %d, %Y — %I:%M %p")
+        return now.strftime("Local time: %A, %B %d, %Y — %H:%M")
 
     # Try as IANA timezone first (e.g. "America/New_York")
     try:
         tz = ZoneInfo(location.strip())
         now = datetime.now(tz)
-        return now.strftime(f"{location}: %A, %B %d, %Y — %I:%M %p")
+        return now.strftime(f"{location}: %A, %B %d, %Y — %H:%M")
     except (KeyError, ValueError):
         pass
 
@@ -300,7 +300,7 @@ def get_time(location: str = "") -> str:
 
         tz = ZoneInfo(tz_name)
         now = datetime.now(tz)
-        return now.strftime(f"{city_name} ({tz_name}): %A, %B %d, %Y — %I:%M %p")
+        return now.strftime(f"{city_name} ({tz_name}): %A, %B %d, %Y — %H:%M")
     except Exception as e:
         log.error(f"Time lookup error: {e}")
         return f"Time lookup failed: {e}"
