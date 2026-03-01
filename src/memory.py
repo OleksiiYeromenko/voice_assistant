@@ -120,9 +120,6 @@ class MarkdownMemoryStore:
         self._conn = self._connect(db_path)
         self._create_tables()
 
-        # Migrate from old SQLite preferences/facts if .md files are empty
-        self._maybe_migrate_sqlite()
-
     # ------------------------------------------------------------------
     # Internal: SQLite connection
     # ------------------------------------------------------------------
@@ -136,55 +133,6 @@ class MarkdownMemoryStore:
     def _create_tables(self):
         self._conn.executescript(_SESSIONS_SQL)
         self._conn.commit()
-
-    # ------------------------------------------------------------------
-    # Migration: old SQLite preferences/facts → .md files
-    # ------------------------------------------------------------------
-    def _maybe_migrate_sqlite(self):
-        """One-time migration from old SQLite preferences/facts tables to .md files."""
-        # Only migrate if PROFILE.md has no entries yet
-        profile = self._read_profile()
-        if profile:
-            return  # Already has data, skip migration
-
-        # Check if old tables exist
-        tables = {
-            r[0]
-            for r in self._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-
-        migrated = False
-
-        # Migrate preferences → PROFILE.md
-        if "preferences" in tables:
-            rows = self._conn.execute("SELECT key, value FROM preferences").fetchall()
-            if rows:
-                data = {r["key"]: r["value"] for r in rows}
-                self._write_profile(data)
-                log.info(f"Migrated {len(rows)} preferences to PROFILE.md")
-                migrated = True
-
-        # Migrate facts → FACTS.md
-        if "facts" in tables:
-            rows = self._conn.execute(
-                "SELECT text, created_at FROM facts ORDER BY id"
-            ).fetchall()
-            if rows:
-                lines = []
-                for r in rows:
-                    date = (r["created_at"] or "")[:10]
-                    lines.append(f"- {r['text']} ({date})")
-                # Write all facts at once
-                self._facts_path.write_text(
-                    "# Known Facts\n\n" + "\n".join(lines) + "\n"
-                )
-                log.info(f"Migrated {len(rows)} facts to FACTS.md")
-                migrated = True
-
-        if migrated:
-            log.info("SQLite → Markdown migration complete. Old tables left intact as backup.")
 
     # ------------------------------------------------------------------
     # PROFILE.md — user preferences (key-value)
