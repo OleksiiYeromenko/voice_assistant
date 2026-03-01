@@ -15,6 +15,7 @@ import random
 import re
 import struct
 import subprocess
+import threading
 import time
 import wave
 from collections.abc import Generator
@@ -23,6 +24,61 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 SENTENCE_RE = re.compile(r'\.(?!\d)\s+|[!?;]\s+')
+
+
+class _DelayedSound:
+    """Plays a WAV after a configurable delay in a background thread. Cancellable.
+
+    Used as pre_proc in stream_speak() so the thinking sound starts a beat after
+    transcription (feels natural) while still blocking TTS until it finishes.
+    """
+
+    def __init__(self, wav_data: bytes, aplay_device: str, delay_s: float):
+        self._wav_data = wav_data
+        self._aplay_device = aplay_device
+        self._delay_s = delay_s
+        self._cancel = threading.Event()
+        self._proc: subprocess.Popen | None = None
+        self._thread = threading.Thread(target=self._run, daemon=True, name="thinking-sound")
+        self._thread.start()
+
+    def _run(self):
+        # Wait for the delay; threading.Event.wait returns True if cancelled early
+        if self._cancel.wait(timeout=self._delay_s):
+            return
+        try:
+            proc = subprocess.Popen(
+                ["aplay", "-D", self._aplay_device],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            proc.stdin.write(self._wav_data)
+            proc.stdin.close()
+            self._proc = proc
+            proc.wait()
+        except Exception:
+            pass
+
+    def wait(self, interrupted_fn, poll_interval: float = 0.05) -> bool:
+        """Poll until delay+playback thread finishes. Returns False if interrupted."""
+        while self._thread.is_alive():
+            if interrupted_fn():
+                self.cancel()
+                return False
+            time.sleep(poll_interval)
+        return True
+
+    def cancel(self):
+        """Stop delay or kill aplay if already started."""
+        self._cancel.set()
+        proc = self._proc
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=1)
+            except Exception:
+                pass
 
 
 class TTSEngine:
@@ -128,11 +184,19 @@ class TTSEngine:
             return self.play_beep()
         return self._start_playback(random.choice(self._greeting_sounds).read_bytes())
 
-    def play_thinking(self) -> subprocess.Popen | None:
-        """Play a random thinking/processing sound (non-blocking). Returns None if none found."""
+    def play_thinking(self, delay_s: float = 0.7) -> "_DelayedSound | subprocess.Popen | None":
+        """Play a random thinking/processing sound. Returns None if none found.
+
+        delay_s: seconds to wait before starting playback (default 0.7).
+                 The sound runs in a background thread so the LLM starts immediately.
+                 Pass delay_s=0 for immediate playback (returns Popen).
+        """
         if not self._thinking_sounds:
             return None
-        return self._start_playback(random.choice(self._thinking_sounds).read_bytes())
+        wav = random.choice(self._thinking_sounds).read_bytes()
+        if delay_s <= 0:
+            return self._start_playback(wav)
+        return _DelayedSound(wav, self.aplay_device, delay_s)
 
     # ------------------------------------------------------------------
     # Core TTS
@@ -184,6 +248,12 @@ class TTSEngine:
         proc.stdin.write(wav_data)
         proc.stdin.close()
         return proc
+
+    def _wait_for_pre(self, pre_proc) -> bool:
+        """Wait for a pre-play sound — handles both Popen and _DelayedSound."""
+        if isinstance(pre_proc, _DelayedSound):
+            return pre_proc.wait(lambda: self._interrupted)
+        return self._wait_for_playback(pre_proc)
 
     def _wait_for_playback(self, proc: subprocess.Popen | None, poll_interval: float = 0.05):
         """Wait for playback process, polling periodically for interrupt.
@@ -273,7 +343,7 @@ class TTSEngine:
 
                         # Before first TTS playback, wait for thinking sound to finish
                         if pre_proc is not None:
-                            if not self._wait_for_playback(pre_proc):
+                            if not self._wait_for_pre(pre_proc):
                                 break  # Interrupted during thinking sound
                             pre_proc = None
 
@@ -297,7 +367,7 @@ class TTSEngine:
                 wav_data, _ = self.synthesize(remaining)
                 # In case no sentence boundary was hit, still wait for thinking sound
                 if pre_proc is not None:
-                    self._wait_for_playback(pre_proc)
+                    self._wait_for_pre(pre_proc)
                     pre_proc = None
                 if self._wait_for_playback(play_proc):
                     play_proc = self._start_playback(wav_data)
