@@ -532,12 +532,11 @@ def _handle_interaction(
         _stop_interrupt_listener(interrupt_thread, interrupt_stop)
 
     # Store response in conversation history. For volatile tools (e.g., get_time),
-    # replace the response with a placeholder so the LLM doesn't parrot stale values.
+    # drop the entire exchange (user + assistant) so no stale time value or confusing
+    # placeholder ends up in context. The system prompt enforces fresh get_time calls.
     if tools_used & VOLATILE_TOOLS:
-        conversation.append({
-            "role": "assistant",
-            "content": "I answered your time or date question using the get_time tool.",
-        })
+        conversation.pop()  # Remove the user message appended before the LLM call
+        # No assistant message added — history stays clean for the next turn
     else:
         conversation.append({"role": "assistant", "content": response})
 
