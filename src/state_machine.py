@@ -69,6 +69,12 @@ class AssistantFSM:
         if self.input_mode == InputMode.WAKE_WORD:
             self._wake_gen = self.wake_detector.listen()
 
+        # UI event bus — injected by run_ui() before starting FSMWorker.
+        # All emit calls are gated by ``if self.ui_bus`` so console-only
+        # mode is fully unaffected.
+        self.ui_bus = None
+        self._turn_count: int = 0
+
         # State handler dispatch table
         self._handlers = {
             State.IDLE: self._state_idle,
@@ -96,6 +102,8 @@ class AssistantFSM:
                 state, ctx = handler(ctx)
                 if state != prev:
                     log.info(f"State: {prev.name} → {state.name}")
+                    if self.ui_bus is not None:
+                        self.ui_bus.state_changed.emit(state.name)
         finally:
             self.memory.close_session(self.session_id)
             log.info("Session closed on shutdown.")
@@ -169,6 +177,9 @@ class AssistantFSM:
             log.info("No speech detected.")
             return State.IDLE, {}
 
+        if self.ui_bus is not None:
+            self.ui_bus.user_said.emit(text)
+
         return State.THINKING, {"text": text, "latency": latency}
 
     # ------------------------------------------------------------------
@@ -197,6 +208,9 @@ class AssistantFSM:
 
         backend = self.router.get_backend(decision.backend_key)
         log.info(f"Router: {decision.reason} → {backend.name}")
+
+        if self.ui_bus is not None:
+            self.ui_bus.model_changed.emit(decision.backend_key, backend.name)
 
         if not isinstance(backend, OllamaBackend):
             print(f"  [Using {decision.backend_key}]")
@@ -241,11 +255,13 @@ class AssistantFSM:
                 response, tools_used = run_llm_with_tools(
                     backend, list(recent), ALL_TOOLS, system_prompt,
                     self.tts, latency, thinking_proc=thinking_proc,
+                    ui_bus=self.ui_bus,
                 )
             else:
                 response, tools_used = run_streaming_llm(
                     backend, list(recent), ALL_TOOLS, system_prompt,
                     self.tts, latency, thinking_proc=thinking_proc,
+                    ui_bus=self.ui_bus,
                 )
         except Exception as e:
             log.error(f"LLM failed: {e}")
@@ -257,11 +273,13 @@ class AssistantFSM:
                         response, tools_used = run_llm_with_tools(
                             fallback, list(recent), ALL_TOOLS, system_prompt,
                             self.tts, latency, thinking_proc=thinking_proc,
+                            ui_bus=self.ui_bus,
                         )
                     else:
                         response, tools_used = run_streaming_llm(
                             fallback, list(recent), ALL_TOOLS, system_prompt,
                             self.tts, latency, thinking_proc=thinking_proc,
+                            ui_bus=self.ui_bus,
                         )
                 except Exception:
                     response = "Sorry, I'm having trouble right now."
@@ -285,6 +303,18 @@ class AssistantFSM:
         # Metrics
         latency.total_ms = (time.perf_counter() - start) * 1000
         print(f"  📊 {latency.summary()}")
+
+        if self.ui_bus is not None:
+            self._turn_count += 1
+            self.ui_bus.turn_count_updated.emit(self._turn_count)
+            self.ui_bus.metrics_updated.emit(
+                latency.stt_ms,
+                latency.llm_first_token_ms,
+                latency.llm_ms,
+                latency.total_ms,
+                latency.model_used,
+            )
+
         snap = snapshot()
         log.info(f"Resources: {snap.summary()}")
         thresholds = self.cfg.get("monitor", {}).get("thresholds", {})

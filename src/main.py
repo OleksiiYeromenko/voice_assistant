@@ -106,10 +106,12 @@ def run_llm_with_tools(
     tts: TTSEngine,
     latency: LatencyRecord,
     thinking_proc=None,
+    ui_bus=None,
 ) -> tuple[str, set[str]]:
     """Run LLM with tool calling and per-sentence streaming TTS.
 
     Returns (response_text, tools_used) so callers can detect volatile tool usage.
+    ui_bus is optional; when provided, streaming tokens and tool events are emitted.
     """
     full_response = ""
     tools_used: set[str] = set()
@@ -129,6 +131,8 @@ def run_llm_with_tools(
                             first_token_seen = True
                             if round_num == 0:
                                 latency.llm_first_token_ms = t.mark()
+                        if ui_bus is not None:
+                            ui_bus.text_chunk.emit(chunk.text)
                         yield chunk.text
                     if chunk.thinking:
                         log.debug(f"[think] {chunk.thinking}")
@@ -147,6 +151,8 @@ def run_llm_with_tools(
 
         if text_buffer.strip():
             print()  # newline after streaming
+            if ui_bus is not None:
+                ui_bus.response_complete.emit()
 
         # If tool calls were issued, execute them and loop
         if tool_calls:
@@ -155,7 +161,11 @@ def run_llm_with_tools(
             for tc in tool_calls:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
                 tools_used.add(tc.name)
+                if ui_bus is not None:
+                    ui_bus.tool_started.emit(tc.name)
                 result = execute_tool(tc.name, tc.arguments)
+                if ui_bus is not None:
+                    ui_bus.tool_done.emit(tc.name, str(result)[:80])
                 messages.append({
                     "role": "tool",
                     "tool_name": tc.name,
@@ -178,11 +188,13 @@ def run_streaming_llm(
     tts: TTSEngine,
     latency: LatencyRecord,
     thinking_proc=None,
+    ui_bus=None,
 ) -> tuple[str, set[str]]:
     """Stream LLM → TTS sentence-by-sentence with tool support for cloud models.
 
     Returns (response_text, tools_used) for consistency with run_llm_with_tools.
     Cloud path currently doesn't loop tool calls, so tools_used is always empty.
+    ui_bus is optional; when provided, streaming tokens are emitted to the UI.
     """
     full_text = ""
     first_token = True
@@ -195,6 +207,8 @@ def run_streaming_llm(
                     latency.llm_first_token_ms = t.mark()
                     first_token = False
                 if chunk.text:
+                    if ui_bus is not None:
+                        ui_bus.text_chunk.emit(chunk.text)
                     yield chunk.text
         latency.llm_ms = t.elapsed_ms
         latency.model_used = backend.name
@@ -204,6 +218,8 @@ def run_streaming_llm(
         print(text, end="", flush=True)
 
     print()  # Newline after streaming
+    if ui_bus is not None:
+        ui_bus.response_complete.emit()
     return full_text.strip(), set()
 
 
@@ -358,7 +374,12 @@ def assistant_loop(cfg: dict):
         memory=memory,
         wake_detector=wake_detector,
     )
-    fsm.run()
+
+    if "--ui" in sys.argv:
+        from src.ui.app import run_ui
+        sys.exit(run_ui(fsm))
+    else:
+        fsm.run()
 
 
 def main():
