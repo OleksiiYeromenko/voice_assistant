@@ -53,7 +53,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._bus = bus
         self.setWindowTitle("Voice Assistant")
-        self.setFixedSize(800, 480)
         self.setStyleSheet(MAIN_STYLESHEET)
 
         # Central widget + vertical layout

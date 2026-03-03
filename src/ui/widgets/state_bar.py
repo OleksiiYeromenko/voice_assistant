@@ -2,26 +2,23 @@
 
 from datetime import datetime
 
-from PyQt6.QtCore import (
-    QEasingCurve,
-    QPropertyAnimation,
-    Qt,
-    QTimer,
-)
-from PyQt6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QWidget
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from src.ui import theme
 
 _THINKING_DOT_FRAMES = ("", ".", "..", "...")
 _THINKING_INTERVAL_MS = 400
-_LISTENING_PULSE_DURATION_MS = 800
+# Listening pulse: alternate between bright and dim fg color via stylesheet
+_LISTENING_PULSE_FRAMES = (True, False)   # True = bright, False = dim
+_LISTENING_PULSE_MS = 500
 _CLOCK_INTERVAL_MS = 30_000
 
 
 class StatePill(QLabel):
     """Rounded pill label that changes color per FSM state.
 
-    LISTENING: a separate pulsing dot animates via QPropertyAnimation.
+    LISTENING: text color pulses bright↔dim via QTimer (no compositing needed).
     THINKING:  dots cycle via QTimer to simulate a typing indicator.
     """
 
@@ -31,35 +28,20 @@ class StatePill(QLabel):
         self.setFixedHeight(28)
         self.setMinimumWidth(120)
 
-        # Pulsing dot for LISTENING state
-        self._dot = QLabel("●", parent)
-        self._dot.setFixedSize(16, 16)
-        self._dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._dot_effect = QGraphicsOpacityEffect(self._dot)
-        self._dot.setGraphicsEffect(self._dot_effect)
-        self._dot_anim = QPropertyAnimation(self._dot_effect, b"opacity", self)
-        self._dot_anim.setDuration(_LISTENING_PULSE_DURATION_MS)
-        self._dot_anim.setStartValue(1.0)
-        self._dot_anim.setEndValue(0.15)
-        self._dot_anim.setEasingCurve(QEasingCurve.Type.SineCurve)
-        self._dot_anim.setLoopCount(-1)  # infinite
-        self._dot.hide()
+        # Shared timer for both listening pulse and thinking dots
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._tick)
+        self._anim_frame = 0
+        self._anim_mode = ""   # "listen" | "think" | ""
 
-        # Thinking dot timer
-        self._think_timer = QTimer(self)
-        self._think_timer.setInterval(_THINKING_INTERVAL_MS)
-        self._think_timer.timeout.connect(self._tick_thinking)
-        self._think_frame = 0
+        self._bg = ""
+        self._fg_bright = ""
+        self._fg_dim = ""
         self._base_text = ""
 
         self.set_state("IDLE")
 
-    def set_state(self, state_name: str):
-        self._think_timer.stop()
-        self._dot_anim.stop()
-        self._dot.hide()
-
-        bg, fg = theme.STATE_COLORS.get(state_name, ("#2D3748", "#718096"))
+    def _apply_pill_style(self, bg: str, fg: str):
         self.setStyleSheet(
             f"QLabel {{"
             f"  background-color: {bg};"
@@ -71,28 +53,40 @@ class StatePill(QLabel):
             f"  letter-spacing: 1px;"
             f"}}"
         )
-        self._dot.setStyleSheet(f"color: {fg}; font-size: 10px;")
+
+    def set_state(self, state_name: str):
+        self._anim_timer.stop()
+        self._anim_frame = 0
+        self._anim_mode = ""
+
+        bg, fg = theme.STATE_COLORS.get(state_name, ("#2D3748", "#718096"))
+        self._bg = bg
+        self._fg_bright = fg
+        # Dim version: same hue at ~40% opacity via a slightly muted color
+        self._fg_dim = theme.TEXT_MUTED
         self._base_text = state_name
 
+        self._apply_pill_style(bg, fg)
+        self.setText(state_name)
+
         if state_name == "LISTENING":
-            self.setText(state_name)
-            self._dot.show()
-            self._dot_anim.setDirection(QPropertyAnimation.Direction.Forward)
-            self._dot_anim.start()
+            self._anim_mode = "listen"
+            self._anim_timer.setInterval(_LISTENING_PULSE_MS)
+            self._anim_timer.start()
         elif state_name == "THINKING":
-            self._think_frame = 0
-            self.setText(state_name)
-            self._think_timer.start()
-        else:
-            self.setText(state_name)
+            self._anim_mode = "think"
+            self._anim_timer.setInterval(_THINKING_INTERVAL_MS)
+            self._anim_timer.start()
 
-    def _tick_thinking(self):
-        self._think_frame = (self._think_frame + 1) % len(_THINKING_DOT_FRAMES)
-        self.setText(self._base_text + _THINKING_DOT_FRAMES[self._think_frame])
-
-    def dot_widget(self) -> QLabel:
-        """Return the pulsing dot so the parent layout can position it."""
-        return self._dot
+    def _tick(self):
+        self._anim_frame += 1
+        if self._anim_mode == "listen":
+            bright = (self._anim_frame % 2 == 0)
+            fg = self._fg_bright if bright else self._fg_dim
+            self._apply_pill_style(self._bg, fg)
+        elif self._anim_mode == "think":
+            dots = _THINKING_DOT_FRAMES[self._anim_frame % len(_THINKING_DOT_FRAMES)]
+            self.setText(self._base_text + dots)
 
 
 class ModelBadge(QLabel):
@@ -108,7 +102,6 @@ class ModelBadge(QLabel):
     def set_model(self, backend_key: str, model_name: str):
         bg, fg = theme.MODEL_COLORS.get(backend_key, ("#2D3748", "#718096"))
         label = theme.MODEL_LABELS.get(backend_key, backend_key.upper())
-        # Show short model tag (last segment after /)
         model_tag = model_name.split("/")[-1].split(":")[0][:14] if model_name else ""
         display = f"{label}  {model_tag}" if model_tag else label
         self.setText(display)
@@ -125,7 +118,7 @@ class ModelBadge(QLabel):
 
 
 class StateBar(QWidget):
-    """Top bar (44px): [StatePill] [dot] [ModelBadge] [stretch] [Turn #N] [HH:MM]"""
+    """Top bar (44px): [StatePill] [ModelBadge] [stretch] [Turn #N] [HH:MM]"""
 
     def __init__(self, bus, parent=None):
         super().__init__(parent)
@@ -141,7 +134,6 @@ class StateBar(QWidget):
         layout.setSpacing(8)
 
         self._pill = StatePill(self)
-        self._dot = self._pill.dot_widget()
         self._badge = ModelBadge(self)
 
         self._turn_label = QLabel("", self)
@@ -156,13 +148,11 @@ class StateBar(QWidget):
         self._update_clock()
 
         layout.addWidget(self._pill)
-        layout.addWidget(self._dot)
         layout.addWidget(self._badge)
         layout.addStretch()
         layout.addWidget(self._turn_label)
         layout.addWidget(self._clock)
 
-        # Clock refresh timer
         self._clock_timer = QTimer(self)
         self._clock_timer.setInterval(_CLOCK_INTERVAL_MS)
         self._clock_timer.timeout.connect(self._update_clock)
