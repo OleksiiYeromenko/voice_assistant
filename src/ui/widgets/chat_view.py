@@ -50,10 +50,10 @@ class ResponseView(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
-        self.setFont(QFont("DejaVu Sans", 26))
+        self.setFont(QFont("DejaVu Sans", 30))
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.document().setDocumentMargin(0)
+        self.document().setDocumentMargin(12)
 
     def append_token(self, token: str):
         """Append a single LLM token and scroll to bottom."""
