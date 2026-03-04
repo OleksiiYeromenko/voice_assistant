@@ -324,13 +324,30 @@ def assistant_loop(cfg: dict):
     backends, default_key = build_backends(cfg)
 
     # Warm-start: preload model(s) into RAM.
+    # Retry up to 3 times per backend in case Ollama wasn't fully ready at boot.
     warm_keys = [default_key]
     if default_key != "local":
         warm_keys.append("local")
     for key in warm_keys:
         b = backends.get(key)
-        if b and hasattr(b, "warm"):
+        if not b or not hasattr(b, "warm"):
+            continue
+        for attempt in range(3):
             b.warm()
+            if hasattr(b, "is_loaded") and b.is_loaded():
+                log.info(f"{key} model confirmed loaded in Ollama RAM")
+                break
+            if attempt < 2:
+                log.warning(
+                    f"{key} model NOT in Ollama RAM after warm-up attempt "
+                    f"{attempt + 1}/3 — retrying in 5s..."
+                )
+                time.sleep(5)
+        else:
+            log.warning(
+                f"{key} model NOT confirmed in Ollama RAM after 3 attempts — "
+                f"first query may be slow"
+            )
 
     router = ModelRouter(
         backends=backends,

@@ -19,7 +19,7 @@ class UserSpeechLabel(QLabel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(60)
+        self.setFixedHeight(68)
         self.setWordWrap(True)
         self.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self.setContentsMargins(12, 4, 12, 4)
@@ -27,13 +27,13 @@ class UserSpeechLabel(QLabel):
 
     def _set_placeholder(self):
         self.setText("")
-        self.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-style: italic; font-size: 20px;")
+        self.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-style: italic; font-size: 24px;")
 
     def set_text(self, text: str):
         # Render "You: <text>" with accent prefix
         self.setText(f"You: {text}")
         self.setStyleSheet(
-            f"color: {theme.TEXT_PRIMARY}; font-style: italic; font-size: 20px;"
+            f"color: {theme.TEXT_PRIMARY}; font-style: italic; font-size: 24px;"
         )
 
     def clear_speech(self):
@@ -50,7 +50,7 @@ class ResponseView(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
-        self.setFont(QFont("DejaVu Sans", 22))
+        self.setFont(QFont("DejaVu Sans", 26))
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.document().setDocumentMargin(0)

@@ -90,16 +90,10 @@ class LatencyPanel(QWidget):
         self._stt = QLabel("STT  —", self)
         self._ttft = QLabel("TTFT —", self)
         self._total = QLabel("TOT  —", self)
-        self._model = QLabel("", self)
 
         for lbl in (self._stt, self._ttft, self._total):
             lbl.setStyleSheet(style)
             layout.addWidget(lbl)
-
-        self._model.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-family: 'DejaVu Sans Mono'; font-size: 15px;"
-        )
-        layout.addWidget(self._model)
 
     @staticmethod
     def _fmt(ms: float) -> str:
@@ -113,17 +107,14 @@ class LatencyPanel(QWidget):
         self._stt.setText(f"STT  {self._fmt(stt_ms)}")
         self._ttft.setText(f"TTFT {self._fmt(ttft_ms)}")
         self._total.setText(f"TOT  {self._fmt(total_ms)}")
-        # Truncate model name for display
-        short_model = model.split("/")[-1][:20] if model else ""
-        self._model.setText(short_model)
 
 
 class SysBar(QWidget):
-    """Bottom bar (100px): CPU + RAM gauges, temperature, latency panel."""
+    """Bottom bar (80px): CPU + RAM gauges, temperature, latency panel."""
 
     def __init__(self, bus, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(100)
+        self.setFixedHeight(80)
         self.setObjectName("sys_bar")
         self.setStyleSheet(f"#sys_bar {{ background-color: {theme.BG_ELEVATED}; border-top: 1px solid #2A2A45; }}")
 

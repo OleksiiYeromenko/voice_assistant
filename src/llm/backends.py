@@ -93,9 +93,10 @@ class OllamaBackend:
     def warm(self):
         """Preload model into memory and prime the KV cache.
 
-        Uses the real num_ctx so the first user query doesn't pay
-        a ~3-4s KV-cache allocation penalty.  Sets keep_alive=-1 so
-        Ollama keeps the model loaded indefinitely (no 5-min timeout).
+        Uses the real num_ctx AND the same think/tools flags as stream() so
+        Ollama doesn't reload the model on the first real request due to a
+        parameter mismatch.  Sets keep_alive=-1 so the model stays loaded
+        indefinitely (no 5-min timeout).
         """
         try:
             log.info(f"Warming up {self._model}...")
@@ -106,16 +107,47 @@ class OllamaBackend:
             }
             if self._num_thread is not None:
                 options["num_thread"] = self._num_thread
+            # Dummy tool — ensures Ollama allocates the tool-calling model variant
+            # in the same configuration used by stream(), preventing a silent reload.
+            _dummy_tool = {
+                "type": "function",
+                "function": {
+                    "name": "_warmup",
+                    "description": "warmup",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
             self._client.chat(
                 model=self._model,
                 messages=[{"role": "user", "content": "hi"}],
+                tools=[_dummy_tool],
                 options=options,
+                think=self._think,   # must match stream() to avoid model reload
                 keep_alive=-1,
             )
             elapsed = time.perf_counter() - start
             log.info(f"Model {self._model} warm in {elapsed:.1f}s")
         except Exception as e:
             log.warning(f"Warm-up failed for {self._model}: {e}")
+
+    def is_loaded(self) -> bool:
+        """Return True if Ollama currently has this model loaded in RAM.
+
+        Queries GET /api/ps — the same endpoint used by `ollama ps`.
+        """
+        try:
+            import json as _json
+            import urllib.request as _req
+            # Extract base URL from the ollama client's httpx client
+            base = str(self._client._client.base_url).rstrip("/")
+            with _req.urlopen(f"{base}/api/ps", timeout=3) as r:
+                data = _json.loads(r.read())
+            return any(
+                m.get("model", "").startswith(self._model)
+                for m in data.get("models", [])
+            )
+        except Exception:
+            return False
 
     def stream(
         self,
