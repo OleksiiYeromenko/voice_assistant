@@ -42,6 +42,18 @@ MODEL_LABELS: dict[str, str] = {
     "claude": "Claude",
     "gemini": "Gemini",
 }
+MODEL_ICONS: dict[str, str] = {
+    "remote": "⚡",   # GPU PC — fast/powerful
+    "local":  "◉",   # Raspberry Pi — compact local device
+    "claude": "☁",   # Claude cloud API
+    "gemini": "☁",   # Gemini cloud API
+}
+
+# ---------------------------------------------------------------------------
+# Idle screen typography
+# ---------------------------------------------------------------------------
+IDLE_CLOCK_FONT_SIZE = 120
+IDLE_DATE_FONT_SIZE = 28
 
 # ---------------------------------------------------------------------------
 # Resource thresholds (CPU & temp gauge colors)

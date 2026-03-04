@@ -12,11 +12,18 @@ import logging
 import sys
 
 from PyQt6.QtCore import QThread, QTimer, Qt
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.ui.signals import UIEventBus
 from src.ui.theme import MAIN_STYLESHEET
 from src.ui.widgets.chat_view import ChatView
+from src.ui.widgets.idle_screen import IdleScreen
 from src.ui.widgets.state_bar import StateBar
 from src.ui.widgets.sys_bar import SysBar
 from src.ui.widgets.tool_strip import ToolStrip
@@ -24,6 +31,8 @@ from src.ui.widgets.tool_strip import ToolStrip
 log = logging.getLogger(__name__)
 
 _RESOURCE_POLL_INTERVAL_MS = 5_000
+
+_IDLE_STATES = {"IDLE", "SESSION_CHECK"}
 
 
 class FSMWorker(QThread):
@@ -47,7 +56,12 @@ class FSMWorker(QThread):
 
 
 class MainWindow(QMainWindow):
-    """800×480 fullscreen window for Raspberry Pi Touch Display 2."""
+    """800×480 fullscreen window for Raspberry Pi Touch Display 2.
+
+    Uses a QStackedWidget to switch between two layouts:
+      Page 0 — IdleScreen: ambient clock + date + slim sys strip
+      Page 1 — Active:     StateBar / ChatView / ToolStrip / SysBar
+    """
 
     def __init__(self, bus: UIEventBus):
         super().__init__()
@@ -55,31 +69,67 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Voice Assistant")
         self.setStyleSheet(MAIN_STYLESHEET)
 
-        # Central widget + vertical layout
         central = QWidget(self)
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Assemble panels
-        self._state_bar = StateBar(bus, central)
-        self._chat_view = ChatView(bus, central)
-        self._tool_strip = ToolStrip(bus, central)
-        self._sys_bar = SysBar(bus, central)
+        # ── Stacked widget ────────────────────────────────────────────────────
+        self._stack = QStackedWidget(central)
+        layout.addWidget(self._stack)
 
-        layout.addWidget(self._state_bar)
-        layout.addWidget(self._chat_view, stretch=1)
-        layout.addWidget(self._tool_strip)
-        layout.addWidget(self._sys_bar)
+        # Page 0 — idle ambient screen
+        self._idle_screen = IdleScreen()
+        self._stack.addWidget(self._idle_screen)
 
-        # Resource polling (runs in main thread — 100ms block every 5s is fine)
+        # Page 1 — active conversation panels
+        active = QWidget()
+        active_layout = QVBoxLayout(active)
+        active_layout.setContentsMargins(0, 0, 0, 0)
+        active_layout.setSpacing(0)
+
+        self._state_bar = StateBar(bus, active)
+        self._chat_view = ChatView(bus, active)
+        self._tool_strip = ToolStrip(bus, active)
+        self._sys_bar = SysBar(bus, active)
+
+        active_layout.addWidget(self._state_bar)
+        active_layout.addWidget(self._chat_view, stretch=1)
+        active_layout.addWidget(self._tool_strip)
+        active_layout.addWidget(self._sys_bar)
+
+        self._stack.addWidget(active)
+
+        # Start on idle screen
+        self._stack.setCurrentIndex(0)
+
+        # ── Signal connections ────────────────────────────────────────────────
+        bus.state_changed.connect(self._on_state_changed)
+        bus.resource_updated.connect(self._on_resource_updated)
+        bus.shutdown_requested.connect(self._on_shutdown)
+
+        # ── Resource polling ──────────────────────────────────────────────────
         self._res_timer = QTimer(self)
         self._res_timer.setInterval(_RESOURCE_POLL_INTERVAL_MS)
         self._res_timer.timeout.connect(self._poll_resources)
         self._res_timer.start()
 
-        bus.shutdown_requested.connect(self._on_shutdown)
+    def _on_state_changed(self, state_name: str):
+        self._idle_screen.on_state_changed(state_name)
+        if state_name in _IDLE_STATES:
+            self._stack.setCurrentIndex(0)
+        else:
+            self._stack.setCurrentIndex(1)
+
+    def _on_resource_updated(
+        self,
+        cpu_pct: float,
+        ram_used: float,
+        ram_total: float,
+        temp: object,
+    ):
+        self._idle_screen.update_resources(cpu_pct, temp)
 
     def _poll_resources(self):
         try:
@@ -99,9 +149,9 @@ class MainWindow(QMainWindow):
         self.close()
 
     def show_fullscreen_rpi(self):
-        """Show fullscreen on RPi; windowed on dev machines (DISPLAY env present)."""
-        import os
-        if os.environ.get("DISPLAY") and "--windowed" in sys.argv:
+        """Fullscreen on RPi; fixed 800×480 window in --windowed dev mode."""
+        if "--windowed" in sys.argv:
+            self.setFixedSize(800, 480)
             self.show()
         else:
             self.showFullScreen()
@@ -114,17 +164,22 @@ def run_ui(fsm) -> int:
     Returns the QApplication exit code for sys.exit().
     """
     # Guard: --text mode uses input() which blocks the worker thread.
-    # In UI mode, keyboard/wake-word input is used instead.
     if "--text" in sys.argv:
         log.warning("--text mode is not compatible with --ui; ignoring --text")
         sys.argv.remove("--text")
+
+    # Ensure display env vars are set when running from SSH
+    import os
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        os.environ["DISPLAY"] = ":0"
+    if not os.environ.get("XDG_RUNTIME_DIR"):
+        os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
     app = QApplication(sys.argv)
     app.setApplicationName("VoiceAssistant")
 
     bus = UIEventBus()
-
-    # Inject the signal bus into the FSM before starting the worker
     fsm.ui_bus = bus
 
     window = MainWindow(bus)
@@ -134,8 +189,6 @@ def run_ui(fsm) -> int:
     worker.start()
 
     exit_code = app.exec()
-
-    # Give the FSM thread a moment to finish cleanly
     worker.wait(3000)
 
     return exit_code

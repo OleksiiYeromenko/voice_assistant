@@ -102,8 +102,10 @@ class ModelBadge(QLabel):
     def set_model(self, backend_key: str, model_name: str):
         bg, fg = theme.MODEL_COLORS.get(backend_key, ("#2D3748", "#718096"))
         label = theme.MODEL_LABELS.get(backend_key, backend_key.upper())
+        icon = theme.MODEL_ICONS.get(backend_key, "")
         model_tag = model_name.split("/")[-1].split(":")[0][:14] if model_name else ""
-        display = f"{label}  {model_tag}" if model_tag else label
+        prefix = f"{icon} {label}" if icon else label
+        display = f"{prefix}  {model_tag}" if model_tag else prefix
         self.setText(display)
         self.setStyleSheet(
             f"QLabel {{"
