@@ -23,7 +23,7 @@ class ResourceGauge(QWidget):
         layout.setSpacing(2)
 
         self._label = QLabel(label, self)
-        self._label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 16px;")
+        self._label.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 18px;")
 
         self._bar = QProgressBar(self)
         self._bar.setRange(0, 100)
@@ -57,10 +57,10 @@ class TemperatureLabel(QWidget):
         layout.setSpacing(2)
 
         header = QLabel("TEMP", self)
-        header.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 16px;")
+        header.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 18px;")
 
         self._value = QLabel("—", self)
-        self._value.setStyleSheet(f"color: {theme.COLOR_OK}; font-size: 20px; font-weight: bold;")
+        self._value.setStyleSheet(f"color: {theme.COLOR_OK}; font-size: 22px; font-weight: bold;")
         self._value.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout.addWidget(header)
@@ -69,11 +69,11 @@ class TemperatureLabel(QWidget):
     def update_temp(self, celsius: float | None):
         if celsius is None:
             self._value.setText("—")
-            self._value.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 20px; font-weight: bold;")
+            self._value.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 22px; font-weight: bold;")
         else:
             color = theme.temp_color(celsius)
             self._value.setText(f"{celsius:.0f}°C")
-            self._value.setStyleSheet(f"color: {color}; font-size: 20px; font-weight: bold;")
+            self._value.setStyleSheet(f"color: {color}; font-size: 22px; font-weight: bold;")
 
 
 class LatencyPanel(QWidget):
@@ -85,7 +85,7 @@ class LatencyPanel(QWidget):
         layout.setContentsMargins(8, 2, 4, 2)
         layout.setSpacing(1)
 
-        style = f"color: {theme.TEXT_SECONDARY}; font-family: 'DejaVu Sans Mono'; font-size: 16px;"
+        style = f"color: {theme.TEXT_SECONDARY}; font-family: 'DejaVu Sans Mono'; font-size: 18px;"
 
         self._stt = QLabel("STT  —", self)
         self._ttft = QLabel("TTFT —", self)
@@ -97,7 +97,7 @@ class LatencyPanel(QWidget):
             layout.addWidget(lbl)
 
         self._model.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-family: 'DejaVu Sans Mono'; font-size: 14px;"
+            f"color: {theme.TEXT_MUTED}; font-family: 'DejaVu Sans Mono'; font-size: 15px;"
         )
         layout.addWidget(self._model)
 
@@ -119,11 +119,11 @@ class LatencyPanel(QWidget):
 
 
 class SysBar(QWidget):
-    """Bottom bar (92px): CPU + RAM gauges, temperature, latency panel."""
+    """Bottom bar (100px): CPU + RAM gauges, temperature, latency panel."""
 
     def __init__(self, bus, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(92)
+        self.setFixedHeight(100)
         self.setObjectName("sys_bar")
         self.setStyleSheet(f"#sys_bar {{ background-color: {theme.BG_ELEVATED}; border-top: 1px solid #2A2A45; }}")
 

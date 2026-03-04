@@ -9,6 +9,7 @@ so no manual locking is required.
 """
 
 import logging
+import subprocess
 import sys
 
 from PyQt6.QtCore import QThread, QTimer, Qt
@@ -31,6 +32,17 @@ from src.ui.widgets.tool_strip import ToolStrip
 log = logging.getLogger(__name__)
 
 _RESOURCE_POLL_INTERVAL_MS = 5_000
+
+
+def _wake_screen():
+    """Un-blank the X display when the wake word fires."""
+    try:
+        subprocess.run(
+            ["xset", "-display", ":0", "dpms", "force", "on"],
+            check=False, timeout=1,
+        )
+    except Exception:
+        pass  # xset not available or display already on — ignore
 _IDLE_SWITCH_DELAY_MS = 20_000   # stay on active screen 20s after returning to IDLE
 
 _IDLE_STATES = {"IDLE", "SESSION_CHECK"}
@@ -129,6 +141,7 @@ class MainWindow(QMainWindow):
         else:
             self._idle_timer.stop()         # cancel pending idle switch
             self._stack.setCurrentIndex(1)  # show active immediately
+            _wake_screen()
 
     def _on_resource_updated(
         self,

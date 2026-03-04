@@ -25,8 +25,7 @@ class StatePill(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setFixedHeight(36)
-        self.setMinimumWidth(130)
+        self.setFixedSize(240, 44)  # fixed width prevents layout shift on text change
 
         # Shared timer for both listening pulse and thinking dots
         self._anim_timer = QTimer(self)
@@ -46,9 +45,9 @@ class StatePill(QLabel):
             f"QLabel {{"
             f"  background-color: {bg};"
             f"  color: {fg};"
-            f"  border-radius: 14px;"
+            f"  border-radius: 16px;"
             f"  padding: 4px 16px;"
-            f"  font-size: 18px;"
+            f"  font-size: 20px;"
             f"  font-weight: bold;"
             f"  letter-spacing: 1px;"
             f"}}"
@@ -95,8 +94,8 @@ class ModelBadge(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setFixedHeight(32)
-        self.setMinimumWidth(90)
+        self.setFixedHeight(38)
+        self.setMinimumWidth(100)
         self.set_model("local", "")
 
     def set_model(self, backend_key: str, model_name: str):
@@ -111,20 +110,20 @@ class ModelBadge(QLabel):
             f"QLabel {{"
             f"  background-color: {bg};"
             f"  color: {fg};"
-            f"  border-radius: 12px;"
-            f"  padding: 4px 12px;"
-            f"  font-size: 16px;"
+            f"  border-radius: 14px;"
+            f"  padding: 4px 14px;"
+            f"  font-size: 18px;"
             f"  font-family: 'DejaVu Sans Mono';"
             f"}}"
         )
 
 
 class StateBar(QWidget):
-    """Top bar (58px): [StatePill] [ModelBadge] [stretch] [Turn #N] [HH:MM]"""
+    """Top bar (68px): [StatePill] [ModelBadge] [stretch] [Turn #N] [HH:MM]"""
 
     def __init__(self, bus, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(58)
+        self.setFixedHeight(68)
         self.setObjectName("state_bar")
         self.setStyleSheet(
             f"#state_bar {{ background-color: {theme.BG_ELEVATED}; "
@@ -139,12 +138,12 @@ class StateBar(QWidget):
         self._badge = ModelBadge(self)
 
         self._turn_label = QLabel("", self)
-        self._turn_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 16px;")
+        self._turn_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 18px;")
         self._turn_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self._clock = QLabel(self)
         self._clock.setStyleSheet(
-            f"color: {theme.TEXT_SECONDARY}; font-family: 'DejaVu Sans Mono'; font-size: 18px;"
+            f"color: {theme.TEXT_SECONDARY}; font-family: 'DejaVu Sans Mono'; font-size: 20px;"
         )
         self._clock.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._update_clock()
