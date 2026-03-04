@@ -53,7 +53,7 @@ class IdleScreen(QWidget):
 
         # ── Bottom strip: state pill + sys stats ─────────────────────────────
         bottom = QWidget(self)
-        bottom.setFixedHeight(40)
+        bottom.setFixedHeight(52)
         bottom.setStyleSheet(f"background-color: {theme.BG_ELEVATED};")
         bottom_layout = QHBoxLayout(bottom)
         bottom_layout.setContentsMargins(12, 0, 12, 0)
@@ -62,7 +62,7 @@ class IdleScreen(QWidget):
         self._state_label = QLabel("● IDLE", self)
         idle_fg = theme.STATE_COLORS["IDLE"][1]
         self._state_label.setStyleSheet(
-            f"color: {idle_fg}; font-size: 13px; font-weight: bold;"
+            f"color: {idle_fg}; font-size: 18px; font-weight: bold;"
         )
 
         self._temp_label = QLabel("", self)
@@ -70,7 +70,7 @@ class IdleScreen(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         self._temp_label.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-size: 13px;"
+            f"color: {theme.TEXT_MUTED}; font-size: 18px;"
             f"font-family: 'DejaVu Sans Mono';"
         )
 
@@ -79,7 +79,7 @@ class IdleScreen(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         self._cpu_label.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-size: 13px;"
+            f"color: {theme.TEXT_MUTED}; font-size: 18px;"
             f"font-family: 'DejaVu Sans Mono';"
         )
 
@@ -106,14 +106,14 @@ class IdleScreen(QWidget):
             color = theme.temp_color(temp)
             self._temp_label.setText(f"{temp:.0f}°C")
             self._temp_label.setStyleSheet(
-                f"color: {color}; font-size: 13px;"
+                f"color: {color}; font-size: 18px;"
                 f"font-family: 'DejaVu Sans Mono';"
             )
 
         cpu_color = theme.cpu_color(cpu_pct)
         self._cpu_label.setText(f"CPU {cpu_pct:.0f}%")
         self._cpu_label.setStyleSheet(
-            f"color: {cpu_color}; font-size: 13px;"
+            f"color: {cpu_color}; font-size: 18px;"
             f"font-family: 'DejaVu Sans Mono';"
         )
 
@@ -122,7 +122,7 @@ class IdleScreen(QWidget):
         _, fg = theme.STATE_COLORS.get(state_name, theme.STATE_COLORS["IDLE"])
         self._state_label.setText(f"● {state_name}")
         self._state_label.setStyleSheet(
-            f"color: {fg}; font-size: 13px; font-weight: bold;"
+            f"color: {fg}; font-size: 18px; font-weight: bold;"
         )
 
     # ── Internal ─────────────────────────────────────────────────────────────

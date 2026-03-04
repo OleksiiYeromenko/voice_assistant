@@ -58,6 +58,7 @@ class STTEngine:
             device=self._device,
             compute_type=self._compute_type,
             cpu_threads=4,
+            local_files_only=True,
         )
         elapsed = time.perf_counter() - start
         log.info(f"STT model loaded in {elapsed:.1f}s")

@@ -31,6 +31,7 @@ from src.ui.widgets.tool_strip import ToolStrip
 log = logging.getLogger(__name__)
 
 _RESOURCE_POLL_INTERVAL_MS = 5_000
+_IDLE_SWITCH_DELAY_MS = 20_000   # stay on active screen 20s after returning to IDLE
 
 _IDLE_STATES = {"IDLE", "SESSION_CHECK"}
 
@@ -104,6 +105,12 @@ class MainWindow(QMainWindow):
         # Start on idle screen
         self._stack.setCurrentIndex(0)
 
+        # ── Idle-switch delay timer ───────────────────────────────────────────
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.setInterval(_IDLE_SWITCH_DELAY_MS)
+        self._idle_timer.timeout.connect(lambda: self._stack.setCurrentIndex(0))
+
         # ── Signal connections ────────────────────────────────────────────────
         bus.state_changed.connect(self._on_state_changed)
         bus.resource_updated.connect(self._on_resource_updated)
@@ -118,9 +125,10 @@ class MainWindow(QMainWindow):
     def _on_state_changed(self, state_name: str):
         self._idle_screen.on_state_changed(state_name)
         if state_name in _IDLE_STATES:
-            self._stack.setCurrentIndex(0)
+            self._idle_timer.start()        # switch to clock after delay
         else:
-            self._stack.setCurrentIndex(1)
+            self._idle_timer.stop()         # cancel pending idle switch
+            self._stack.setCurrentIndex(1)  # show active immediately
 
     def _on_resource_updated(
         self,
