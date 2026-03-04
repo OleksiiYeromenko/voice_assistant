@@ -272,7 +272,7 @@ class AssistantFSM:
                     (k for k, v in self.router.backends.items() if v is fallback),
                     "local",
                 )
-                log.info(f"Silently falling back to {fallback_key}/{fallback.name}")
+                log.info(f"Silently falling back to {fallback_key} ({fallback.name})")
                 if self.ui_bus is not None:
                     self.ui_bus.model_changed.emit(fallback_key, fallback.name)
                 try:

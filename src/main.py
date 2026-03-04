@@ -333,7 +333,13 @@ def assistant_loop(cfg: dict):
         if not b or not hasattr(b, "warm"):
             continue
         for attempt in range(3):
-            b.warm()
+            try:
+                b.warm()
+            except Exception as e:
+                if "404" in str(e).lower() or "not found" in str(e).lower():
+                    log.warning(f"{key}: model not installed on server — skipping retries")
+                    break  # permanent failure; retrying won't help
+                # transient error (connection refused, timeout) — fall through to retry
             if hasattr(b, "is_loaded") and b.is_loaded():
                 log.info(f"{key} model confirmed loaded in Ollama RAM")
                 break

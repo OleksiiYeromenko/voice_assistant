@@ -135,6 +135,11 @@ class OllamaBackend:
             elapsed = time.perf_counter() - start
             log.info(f"Model {self._model} warm in {elapsed:.1f}s")
         except Exception as e:
+            err = str(e).lower()
+            if "404" in err or "not found" in err:
+                # Model not installed on this server — retrying won't help
+                log.warning(f"Warm-up skipped for {self._model} on {self._base_url}: model not found (404)")
+                raise  # propagate so the caller can skip retries immediately
             log.warning(f"Warm-up failed for {self._model}: {e}")
 
     def is_loaded(self) -> bool:
