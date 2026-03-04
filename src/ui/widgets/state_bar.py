@@ -137,10 +137,6 @@ class StateBar(QWidget):
         self._pill = StatePill(self)
         self._badge = ModelBadge(self)
 
-        self._turn_label = QLabel("", self)
-        self._turn_label.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 18px;")
-        self._turn_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
         self._clock = QLabel(self)
         self._clock.setStyleSheet(
             f"color: {theme.TEXT_SECONDARY}; font-family: 'DejaVu Sans Mono'; font-size: 20px;"
@@ -151,7 +147,6 @@ class StateBar(QWidget):
         layout.addWidget(self._pill)
         layout.addWidget(self._badge)
         layout.addStretch()
-        layout.addWidget(self._turn_label)
         layout.addWidget(self._clock)
 
         self._clock_timer = QTimer(self)
@@ -164,16 +159,12 @@ class StateBar(QWidget):
     def _connect_signals(self, bus):
         bus.state_changed.connect(self._on_state_changed)
         bus.model_changed.connect(self._on_model_changed)
-        bus.turn_count_updated.connect(self._on_turn_count)
 
     def _on_state_changed(self, state_name: str):
         self._pill.set_state(state_name)
 
     def _on_model_changed(self, backend_key: str, model_name: str):
         self._badge.set_model(backend_key, model_name)
-
-    def _on_turn_count(self, count: int):
-        self._turn_label.setText(f"Turn #{count}")
 
     def _update_clock(self):
         self._clock.setText(datetime.now().strftime("%H:%M"))

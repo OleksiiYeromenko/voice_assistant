@@ -27,7 +27,6 @@ from src.ui.widgets.chat_view import ChatView
 from src.ui.widgets.idle_screen import IdleScreen
 from src.ui.widgets.state_bar import StateBar
 from src.ui.widgets.sys_bar import SysBar
-from src.ui.widgets.tool_strip import ToolStrip
 
 log = logging.getLogger(__name__)
 
@@ -104,12 +103,10 @@ class MainWindow(QMainWindow):
 
         self._state_bar = StateBar(bus, active)
         self._chat_view = ChatView(bus, active)
-        self._tool_strip = ToolStrip(bus, active)
         self._sys_bar = SysBar(bus, active)
 
         active_layout.addWidget(self._state_bar)
         active_layout.addWidget(self._chat_view, stretch=1)
-        active_layout.addWidget(self._tool_strip)
         active_layout.addWidget(self._sys_bar)
 
         self._stack.addWidget(active)
