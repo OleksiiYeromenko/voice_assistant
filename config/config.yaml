@@ -34,7 +34,7 @@ llm:
   local:
     model: "qwen3:4b-instruct"
     temperature: 0.7
-    num_ctx: 4096
+    num_ctx: 2048
     num_thread: 4              # Optimal for RPi 5 (4 cores); avoids ARM64 thread misdetection
     think: false
     # System prompt is loaded from memory/PERSONA.md (human-editable, git-tracked)
