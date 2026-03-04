@@ -78,6 +78,7 @@ class OllamaBackend:
     ):
         import ollama
         self._client = ollama.Client(host=base_url)
+        self._base_url = base_url.rstrip("/")   # stored for is_loaded() / diagnostics
         self._model = model
         self._temperature = temperature
         self._num_ctx = num_ctx
@@ -117,14 +118,20 @@ class OllamaBackend:
                     "parameters": {"type": "object", "properties": {}},
                 },
             }
-            self._client.chat(
-                model=self._model,
-                messages=[{"role": "user", "content": "hi"}],
-                tools=[_dummy_tool],
-                options=options,
-                think=self._think,   # must match stream() to avoid model reload
-                keep_alive=-1,
-            )
+            chat_kwargs: dict[str, Any] = {
+                "model": self._model,
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [_dummy_tool],
+                "options": options,
+                "keep_alive": -1,
+            }
+            # `think` is supported in ollama-python ≥ 0.4.7 (qwen3 hybrid-think).
+            # Try with it first; fall back silently if this version doesn't support it.
+            try:
+                self._client.chat(**chat_kwargs, think=self._think)
+            except TypeError:
+                log.debug("ollama client doesn't support think= kwarg; retrying without it")
+                self._client.chat(**chat_kwargs)
             elapsed = time.perf_counter() - start
             log.info(f"Model {self._model} warm in {elapsed:.1f}s")
         except Exception as e:
@@ -138,9 +145,7 @@ class OllamaBackend:
         try:
             import json as _json
             import urllib.request as _req
-            # Extract base URL from the ollama client's httpx client
-            base = str(self._client._client.base_url).rstrip("/")
-            with _req.urlopen(f"{base}/api/ps", timeout=3) as r:
+            with _req.urlopen(f"{self._base_url}/api/ps", timeout=3) as r:
                 data = _json.loads(r.read())
             return any(
                 m.get("model", "").startswith(self._model)
@@ -242,12 +247,8 @@ class OllamaBackend:
                     yield LLMChunk(text=buf, model=self.name)
 
         except Exception as e:
-            log.error(f"Ollama error: {e}")
-            yield LLMChunk(
-                text=f"Sorry, local model error: {e}",
-                done=True,
-                model=self.name,
-            )
+            log.error(f"Ollama stream error: {e}")
+            raise  # Let state_machine handle fallback silently; don't pollute TTS with error text
 
 
 # ---------------------------------------------------------------------------

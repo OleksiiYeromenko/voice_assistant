@@ -267,7 +267,14 @@ class AssistantFSM:
             log.error(f"LLM failed: {e}")
             fallback = self.router.get_fallback(decision.backend_key)
             if fallback:
-                print(f"  [Falling back to {fallback.name}]")
+                # Find the key for the fallback backend so we can update the UI badge
+                fallback_key = next(
+                    (k for k, v in self.router.backends.items() if v is fallback),
+                    "local",
+                )
+                log.info(f"Silently falling back to {fallback_key}/{fallback.name}")
+                if self.ui_bus is not None:
+                    self.ui_bus.model_changed.emit(fallback_key, fallback.name)
                 try:
                     if isinstance(fallback, OllamaBackend):
                         response, tools_used = run_llm_with_tools(
