@@ -1,0 +1,65 @@
+# Voice Assistant — systemd service (headless / console mode)
+#
+# Runs with wake word detection, no GUI.
+# Install:  sudo cp scripts/voice-assistant.service /etc/systemd/system/
+#           sudo systemctl daemon-reload
+#           sudo systemctl enable --now voice-assistant
+#
+# Logs:     journalctl -u voice-assistant -f
+# Status:   systemctl status voice-assistant
+
+[Unit]
+Description=Voice Assistant (Poondyk)
+Documentation=file:///home/pi/Projects/voice_assistant/README.md
+After=network-online.target sound.target ollama.service
+Wants=network-online.target ollama.service
+
+# If Ollama isn't ready yet, the assistant handles fallback gracefully,
+# but we give it a head start with the After= ordering.
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+WorkingDirectory=/home/pi/Projects/voice_assistant
+
+# Use uv to run inside the project venv automatically
+ExecStart=/home/pi/.local/bin/uv run python -m src.main
+
+# Restart on crash, but not on clean shutdown (Ctrl-C / SIGTERM)
+Restart=on-failure
+RestartSec=5
+
+# Give TTS/STT time to release ALSA devices on stop
+TimeoutStopSec=10
+
+# Environment — audio and locale
+Environment="HOME=/home/pi"
+Environment="PATH=/home/pi/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+
+# Cloud API keys (uncomment and set if using Claude/Gemini)
+# Environment="ANTHROPIC_API_KEY=sk-ant-..."
+# Environment="GOOGLE_API_KEY=..."
+EnvironmentFile=-/home/pi/Projects/voice_assistant/.env
+
+# Resource limits — generous for RPi 5 16GB
+MemoryMax=8G
+CPUQuota=300%
+
+# Security hardening (compatible with audio + network access)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/home/pi/Projects/voice_assistant/data
+ReadWritePaths=/home/pi/Projects/voice_assistant/memory
+ReadWritePaths=/home/pi/Projects/voice_assistant/tts_output
+ReadWritePaths=/home/pi/Projects/voice_assistant/stt_output
+ProtectHome=no
+PrivateTmp=yes
+
+# Audio access
+SupplementaryGroups=audio video render input
+
+[Install]
+WantedBy=multi-user.target

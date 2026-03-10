@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# va — Voice Assistant service manager
+#
+# Usage:
+#   va install [--ui]     Install and enable the systemd service
+#   va uninstall          Disable and remove the systemd service
+#   va start              Start the service
+#   va stop               Stop the service
+#   va restart             Restart the service
+#   va status             Show service status
+#   va logs [--follow]    Show logs (add --follow or -f for live tail)
+#   va run [ARGS...]      Run directly (not as service) — e.g. va run --no-wake --text
+
+set -euo pipefail
+
+PROJECT_DIR="/home/pi/Projects/voice_assistant"
+SERVICE_DIR="/etc/systemd/system"
+HEADLESS_SERVICE="voice-assistant.service"
+UI_SERVICE="voice-assistant-ui.service"
+
+# Detect which service is installed, default to headless
+_active_service() {
+    if systemctl is-enabled "$UI_SERVICE" &>/dev/null; then
+        echo "$UI_SERVICE"
+    elif systemctl is-enabled "$HEADLESS_SERVICE" &>/dev/null; then
+        echo "$HEADLESS_SERVICE"
+    else
+        echo "$HEADLESS_SERVICE"
+    fi
+}
+
+case "${1:-help}" in
+    install)
+        if [[ "${2:-}" == "--ui" ]]; then
+            SVC="$UI_SERVICE"
+            SRC="$PROJECT_DIR/scripts/voice-assistant-ui.service"
+        else
+            SVC="$HEADLESS_SERVICE"
+            SRC="$PROJECT_DIR/scripts/voice-assistant.service"
+        fi
+
+        # Disable the other variant if active
+        OTHER=$([ "$SVC" = "$UI_SERVICE" ] && echo "$HEADLESS_SERVICE" || echo "$UI_SERVICE")
+        if systemctl is-enabled "$OTHER" &>/dev/null; then
+            echo "→ Disabling $OTHER (only one variant can run)"
+            sudo systemctl disable --now "$OTHER"
+        fi
+
+        echo "→ Installing $SVC"
+        sudo cp "$SRC" "$SERVICE_DIR/$SVC"
+        sudo systemctl daemon-reload
+        sudo systemctl enable "$SVC"
+
+        # Create .env if it doesn't exist
+        if [ ! -f "$PROJECT_DIR/.env" ]; then
+            cat > "$PROJECT_DIR/.env" <<'ENVEOF'
+# Voice Assistant environment — loaded by systemd service
+# Uncomment and set your API keys:
+# ANTHROPIC_API_KEY=sk-ant-...
+# GOOGLE_API_KEY=...
+ENVEOF
+            echo "→ Created .env (edit to add API keys)"
+        fi
+
+        echo "✓ Installed and enabled $SVC"
+        echo "  Start now:  va start"
+        echo "  View logs:  va logs -f"
+        ;;
+
+    uninstall)
+        SVC=$(_active_service)
+        echo "→ Disabling $SVC"
+        sudo systemctl disable --now "$SVC" 2>/dev/null || true
+        sudo rm -f "$SERVICE_DIR/$HEADLESS_SERVICE" "$SERVICE_DIR/$UI_SERVICE"
+        sudo systemctl daemon-reload
+        echo "✓ Service removed"
+        ;;
+
+    start)
+        SVC=$(_active_service)
+        echo "→ Starting $SVC"
+        sudo systemctl start "$SVC"
+        sleep 1
+        systemctl status "$SVC" --no-pager -l
+        ;;
+
+    stop)
+        SVC=$(_active_service)
+        echo "→ Stopping $SVC"
+        sudo systemctl stop "$SVC"
+        echo "✓ Stopped"
+        ;;
+
+    restart)
+        SVC=$(_active_service)
+        echo "→ Restarting $SVC"
+        sudo systemctl restart "$SVC"
+        sleep 1
+        systemctl status "$SVC" --no-pager -l
+        ;;
+
+    status)
+        SVC=$(_active_service)
+        systemctl status "$SVC" --no-pager -l 2>/dev/null || echo "Service not installed. Run: va install"
+        ;;
+
+    logs)
+        SVC=$(_active_service)
+        shift
+        if [[ "${1:-}" == "-f" || "${1:-}" == "--follow" ]]; then
+            journalctl -u "$SVC" -f --no-hostname
+        else
+            journalctl -u "$SVC" -n 50 --no-pager --no-hostname
+        fi
+        ;;
+
+    run)
+        shift
+        cd "$PROJECT_DIR"
+        exec uv run python -m src.main "$@"
+        ;;
+
+    help|--help|-h)
+        echo "va — Voice Assistant service manager"
+        echo ""
+        echo "Usage:"
+        echo "  va install [--ui]     Install systemd service (--ui for PyQt6 display)"
+        echo "  va uninstall          Remove systemd service"
+        echo "  va start              Start the service"
+        echo "  va stop               Stop the service"
+        echo "  va restart            Restart the service"
+        echo "  va status             Show service status"
+        echo "  va logs [-f]          Show logs (-f for live follow)"
+        echo "  va run [ARGS...]      Run directly (e.g. va run --no-wake --text)"
+        ;;
+
+    *)
+        echo "Unknown command: $1 (try 'va help')"
+        exit 1
+        ;;
+esac

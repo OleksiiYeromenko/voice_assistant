@@ -72,7 +72,7 @@ class MainWindow(QMainWindow):
 
     Uses a QStackedWidget to switch between two layouts:
       Page 0 — IdleScreen: ambient clock + date + slim sys strip
-      Page 1 — Active:     StateBar / ChatView / ToolStrip / SysBar
+      Page 1 — Active:     StateBar / ChatView / SysBar
     """
 
     def __init__(self, bus: UIEventBus):
