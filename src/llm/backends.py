@@ -368,18 +368,13 @@ class GeminiBackend:
     ) -> Generator[LLMChunk, None, None]:
         from google.genai import types
 
-        # Convert messages to Gemini format
-        contents = []
-        for msg in messages:
-            role = "model" if msg["role"] == "assistant" else "user"
-            contents.append(types.Content(
-                role=role,
-                parts=[types.Part(text=msg["content"])],
-            ))
+        # Convert messages to Gemini format (handles text, tool calls, tool results)
+        contents = self._convert_messages(messages)
 
         config = types.GenerateContentConfig(
             system_instruction=system or "",
             max_output_tokens=self._max_tokens,
+            tools=self._convert_tools(tools) if tools else None,
         )
 
         try:
@@ -389,8 +384,20 @@ class GeminiBackend:
                 config=config,
             )
             for chunk in response:
-                text = chunk.text if hasattr(chunk, "text") and chunk.text else ""
-                yield LLMChunk(text=text, model=self.name)
+                # Check for function calls first
+                fc_list = getattr(chunk, "function_calls", None)
+                if fc_list:
+                    tool_calls = []
+                    for fc in fc_list:
+                        tool_calls.append(ToolCall(
+                            name=fc.name,
+                            arguments=dict(fc.args) if fc.args else {},
+                        ))
+                    yield LLMChunk(tool_calls=tool_calls, model=self.name)
+                else:
+                    text = chunk.text if hasattr(chunk, "text") and chunk.text else ""
+                    if text:
+                        yield LLMChunk(text=text, model=self.name)
             yield LLMChunk(done=True, model=self.name)
         except Exception as e:
             log.error(f"Gemini error: {e}")
@@ -399,3 +406,75 @@ class GeminiBackend:
                 done=True,
                 model=self.name,
             )
+
+    @staticmethod
+    def _convert_messages(messages: list[dict]) -> list:
+        """Convert internal message format to Gemini Content objects.
+
+        Handles:
+          - user/assistant text messages
+          - assistant messages with tool_calls → model Content with FunctionCall parts
+          - tool result messages → user Content with FunctionResponse parts
+            (consecutive tool results are grouped into a single Content)
+        """
+        from google.genai import types
+
+        contents: list[types.Content] = []
+
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+
+            if msg["role"] == "tool":
+                # Group consecutive tool results into a single user Content
+                parts = []
+                while i < len(messages) and messages[i]["role"] == "tool":
+                    tmsg = messages[i]
+                    parts.append(types.Part.from_function_response(
+                        name=tmsg.get("tool_name", "unknown"),
+                        response={"result": tmsg.get("content", "")},
+                    ))
+                    i += 1
+                contents.append(types.Content(role="user", parts=parts))
+                continue
+
+            if msg["role"] == "assistant":
+                parts = []
+                # Text part (if any)
+                if msg.get("content"):
+                    parts.append(types.Part(text=msg["content"]))
+                # Function call parts from tool-loop metadata
+                if msg.get("tool_calls"):
+                    for tc in msg["tool_calls"]:
+                        parts.append(types.Part(function_call=types.FunctionCall(
+                            name=tc["name"],
+                            args=tc.get("arguments", {}),
+                        )))
+                if not parts:
+                    parts.append(types.Part(text=""))
+                contents.append(types.Content(role="model", parts=parts))
+            else:
+                # user message
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part(text=msg.get("content", ""))],
+                ))
+
+            i += 1
+
+        return contents
+
+    @staticmethod
+    def _convert_tools(ollama_tools: list[dict]) -> list:
+        """Convert Ollama/OpenAI tool format to Gemini format."""
+        from google.genai import types
+
+        declarations = []
+        for t in ollama_tools:
+            fn = t.get("function", t)
+            declarations.append(types.FunctionDeclaration(
+                name=fn["name"],
+                description=fn.get("description", ""),
+                parameters=fn.get("parameters", {}),
+            ))
+        return [types.Tool(function_declarations=declarations)]

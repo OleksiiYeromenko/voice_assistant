@@ -156,7 +156,14 @@ def run_llm_with_tools(
 
         # If tool calls were issued, execute them and loop
         if tool_calls:
-            messages.append({"role": "assistant", "content": text_buffer or ""})
+            messages.append({
+                "role": "assistant",
+                "content": text_buffer or "",
+                "tool_calls": [
+                    {"name": tc.name, "arguments": tc.arguments}
+                    for tc in tool_calls
+                ],
+            })
 
             for tc in tool_calls:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
