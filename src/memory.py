@@ -248,6 +248,20 @@ class MarkdownMemoryStore:
         self._conn.commit()
         log.info(f"Session {session_id} closed. Summary: {summary}")
 
+    def update_session_summary(
+        self,
+        session_id: int,
+        summary: str | None = None,
+        topics: str | None = None,
+    ):
+        """Attach a summary to an already-closed session (background thread safe)."""
+        self._conn.execute(
+            "UPDATE sessions SET summary=?, topics=? WHERE id=?",
+            (summary, topics, session_id),
+        )
+        self._conn.commit()
+        log.info(f"Session {session_id} summary updated: {summary}")
+
     def close_stale_sessions(self):
         """Close any sessions left open from a previous run (clean startup)."""
         rows = self._conn.execute(

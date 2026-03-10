@@ -44,7 +44,7 @@ def _wake_screen():
         pass  # xset not available or display already on — ignore
 _IDLE_SWITCH_DELAY_MS = 20_000   # stay on active screen 20s after returning to IDLE
 
-_IDLE_STATES = {"IDLE", "SESSION_CHECK"}
+_IDLE_STATES = {"IDLE"}
 
 
 class FSMWorker(QThread):

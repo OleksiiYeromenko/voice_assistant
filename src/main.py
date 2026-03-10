@@ -226,11 +226,48 @@ def run_streaming_llm(
 # ---------------------------------------------------------------------------
 # Session management
 # ---------------------------------------------------------------------------
-def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time, session_id):
-    """Check if session has expired. If so, summarize, close, and open a new one.
+def _summarize_in_background(backend, messages, memory, session_id):
+    """Run session summarization on a background thread.
 
+    Writes summary + topics back to the (already-closed) session record.
+    """
+    raw_text = ""
+    try:
+        for chunk in backend.stream(
+            messages,
+            system="You are a summarizer. Respond in the exact format requested.",
+        ):
+            if chunk.text:
+                raw_text += chunk.text
+
+        if raw_text.strip():
+            summary_line = None
+            topics_line = None
+            for line in raw_text.strip().splitlines():
+                line = line.strip()
+                if line.lower().startswith("summary:"):
+                    summary_line = line[len("summary:"):].strip()
+                elif line.lower().startswith("topics:"):
+                    topics_line = line[len("topics:"):].strip()
+
+            if not summary_line:
+                summary_line = raw_text.strip().splitlines()[0].strip()
+
+            memory.update_session_summary(session_id, summary_line, topics_line)
+            if topics_line:
+                log.info(f"Session topics: {topics_line}")
+    except Exception as e:
+        log.warning(f"Background session summary failed: {e}")
+
+
+def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time, session_id):
+    """Check if session has expired. If so, close and open a new one.
+
+    Summarization runs in a background thread so SESSION_CHECK is non-blocking.
     Returns new session_id if session was ended, None otherwise.
     """
+    import threading
+
     timeout = cfg.get("session", {}).get("inactivity_timeout_s", 300)
 
     if not conversation or last_interaction_time is None:
@@ -240,12 +277,16 @@ def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_tim
     if elapsed < timeout:
         return None
 
-    log.info(f"Session expired ({elapsed:.0f}s idle). Summarizing...")
+    log.info(f"Session expired ({elapsed:.0f}s idle). Rotating session...")
 
-    summary_line = None
-    topics_line = None
-
-    if cfg.get("session", {}).get("auto_summarize", True) and memory and len(conversation) >= 4:
+    # Capture conversation snapshot BEFORE clearing
+    should_summarize = (
+        cfg.get("session", {}).get("auto_summarize", True)
+        and memory
+        and len(conversation) >= 4
+    )
+    summary_messages = None
+    if should_summarize:
         backend = backends.get("local") or backends.get("remote")
         if backend:
             summary_messages = list(conversation[-10:])
@@ -259,39 +300,25 @@ def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_tim
                     "Topics: <keyword1, keyword2, ...>"
                 ),
             })
-            raw_text = ""
-            try:
-                for chunk in backend.stream(
-                    summary_messages,
-                    system="You are a summarizer. Respond in the exact format requested.",
-                ):
-                    if chunk.text:
-                        raw_text += chunk.text
 
-                if raw_text.strip():
-                    # Parse structured response
-                    for line in raw_text.strip().splitlines():
-                        line = line.strip()
-                        if line.lower().startswith("summary:"):
-                            summary_line = line[len("summary:"):].strip()
-                        elif line.lower().startswith("topics:"):
-                            topics_line = line[len("topics:"):].strip()
-
-                    # Fallback: if model didn't follow format, use entire text
-                    if not summary_line:
-                        summary_line = raw_text.strip().splitlines()[0].strip()
-
-                    log.info(f"Session summary: {summary_line}")
-                    if topics_line:
-                        log.info(f"Session topics: {topics_line}")
-            except Exception as e:
-                log.warning(f"Session summary failed: {e}")
-
-    # Close current session and open a fresh one
-    memory.close_session(session_id, summary=summary_line, topics=topics_line)
+    # Close current session immediately (no summary yet) and open a fresh one
+    old_session_id = session_id
+    memory.close_session(session_id, summary=None, topics=None)
     conversation.clear()
     new_session_id = memory.open_session()
     log.info("Conversation history cleared for new session.")
+
+    # Fire-and-forget: summarize in background, update the closed session record
+    if summary_messages and backend:
+        t = threading.Thread(
+            target=_summarize_in_background,
+            args=(backend, summary_messages, memory, old_session_id),
+            daemon=True,
+            name="session-summarizer",
+        )
+        t.start()
+        log.info(f"Background summarization started for session {old_session_id}")
+
     return new_session_id
 
 
