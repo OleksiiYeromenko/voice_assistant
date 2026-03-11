@@ -160,7 +160,7 @@ def run_llm_with_tools(
                 "role": "assistant",
                 "content": text_buffer or "",
                 "tool_calls": [
-                    {"name": tc.name, "arguments": tc.arguments}
+                    {"function": {"name": tc.name, "arguments": tc.arguments}}
                     for tc in tool_calls
                 ],
             })

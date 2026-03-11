@@ -76,8 +76,12 @@ class OllamaBackend:
         think: bool = False,
         label: str = "local",
     ):
+        import httpx
         import ollama
-        self._client = ollama.Client(host=base_url)
+        self._client = ollama.Client(
+            host=base_url,
+            timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0),
+        )
         self._base_url = base_url.rstrip("/")   # stored for is_loaded() / diagnostics
         self._model = model
         self._temperature = temperature
@@ -444,11 +448,13 @@ class GeminiBackend:
                 if msg.get("content"):
                     parts.append(types.Part(text=msg["content"]))
                 # Function call parts from tool-loop metadata
+                # Format: {"function": {"name": ..., "arguments": ...}} (Ollama-compatible)
                 if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
+                        fn = tc.get("function", tc)  # support both nested and flat
                         parts.append(types.Part(function_call=types.FunctionCall(
-                            name=tc["name"],
-                            args=tc.get("arguments", {}),
+                            name=fn["name"],
+                            args=fn.get("arguments", {}),
                         )))
                 if not parts:
                     parts.append(types.Part(text=""))

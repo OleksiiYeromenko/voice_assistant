@@ -162,7 +162,7 @@ def test_gemini_tools():
 
     messages.append({
         "role": "assistant", "content": text,
-        "tool_calls": [{"name": tc.name, "arguments": tc.arguments}],
+        "tool_calls": [{"function": {"name": tc.name, "arguments": tc.arguments}}],
     })
     messages.append({"role": "tool", "tool_name": tc.name, "content": result})
 
