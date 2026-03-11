@@ -11,6 +11,7 @@ Usage:
   uv run scripts/test_components.py weather       # Test weather tool
   uv run scripts/test_components.py search        # Test web search tool
   uv run scripts/test_components.py router        # Test model routing
+  uv run scripts/test_components.py pipeline      # Test full text→LLM→tools→answer (no STT/TTS)
   uv run scripts/test_components.py all           # Run all tests
 """
 
@@ -239,6 +240,87 @@ def test_router():
     return all_pass
 
 
+def test_pipeline():
+    """Full pipeline: text → system prompt → LLM → tool loop → answer (no STT/TTS)."""
+    print("\n" + "=" * 50)
+    print("Testing pipeline (text → LLM → tools → answer)")
+    print("=" * 50)
+    from src.config import load_config
+    from src.llm.backends import OllamaBackend
+    from src.tools.executor import ALL_TOOLS, execute_tool
+
+    cfg = load_config()
+    model_cfg = cfg["llm"]["local"]
+    local_url = cfg["llm"].get("local_base_url", "http://localhost:11434")
+
+    backend = OllamaBackend(
+        model=model_cfg["model"],
+        base_url=local_url,
+        temperature=model_cfg["temperature"],
+        num_ctx=model_cfg["num_ctx"],
+        num_predict=model_cfg.get("num_predict"),
+        num_thread=model_cfg.get("num_thread"),
+        think=model_cfg.get("think", False),
+        label="local",
+    )
+    print(f"  Backend: {backend.name}")
+
+    # Build system prompt (with memory context, matching production)
+    system = ""
+    try:
+        from src.memory import MarkdownMemoryStore
+        mem = MarkdownMemoryStore()
+        system = mem.build_system_prompt(model_info=f"You are running as: {backend.name}")
+        print(f"  System prompt: {len(system)} chars")
+    except Exception as e:
+        print(f"  Memory unavailable ({e}), using fallback prompt")
+        system = "You are a helpful voice assistant. Be concise."
+
+    query = "What time is it in London?"
+    messages = [{"role": "user", "content": query}]
+    print(f"  Query: '{query}'")
+
+    MAX_ROUNDS = 5
+    t0 = time.time()
+    final_text = ""
+
+    for round_num in range(MAX_ROUNDS):
+        text = ""
+        tool_calls = []
+
+        for chunk in backend.stream(messages, tools=ALL_TOOLS, system=system):
+            text += chunk.text
+            tool_calls.extend(chunk.tool_calls)
+
+        if tool_calls:
+            messages.append({
+                "role": "assistant",
+                "content": text,
+                "tool_calls": [
+                    {"function": {"name": tc.name, "arguments": tc.arguments}}
+                    for tc in tool_calls
+                ],
+            })
+            for tc in tool_calls:
+                print(f"  Round {round_num + 1} tool: {tc.name}({tc.arguments})")
+                result = execute_tool(tc.name, tc.arguments)
+                print(f"    → {result}")
+                messages.append({
+                    "role": "tool",
+                    "tool_name": tc.name,
+                    "content": result,
+                })
+            continue
+
+        final_text = text.strip()
+        break
+
+    elapsed = time.time() - t0
+    print(f"  Answer: {final_text[:200]}")
+    print(f"  Time: {elapsed:.1f}s ({round_num + 1} round(s))")
+    return bool(final_text)
+
+
 TESTS = {
     "stt": test_stt,
     "tts": test_tts,
@@ -249,6 +331,7 @@ TESTS = {
     "weather": test_weather,
     "search": test_search,
     "router": test_router,
+    "pipeline": test_pipeline,
 }
 
 

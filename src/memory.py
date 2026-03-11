@@ -411,11 +411,6 @@ class MarkdownMemoryStore:
             fact_lines = "\n".join(f"- {f}" for f in facts)
             parts.append(f"\n## Known Facts\n{fact_lines}")
 
-        # Latest session summary
-        latest = self.get_latest_summary()
-        if latest and latest.get("summary"):
-            parts.append(f"\n## Last Conversation\n{latest['summary']}")
-
         return "\n".join(parts)
 
     @staticmethod
