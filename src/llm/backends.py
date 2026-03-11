@@ -71,6 +71,7 @@ class OllamaBackend:
         base_url: str = "http://localhost:11434",
         temperature: float = 0.7,
         num_ctx: int = 4096,
+        num_predict: int | None = 384,
         num_thread: int | None = None,
         system_prompt: str = "",
         think: bool = False,
@@ -86,6 +87,7 @@ class OllamaBackend:
         self._model = model
         self._temperature = temperature
         self._num_ctx = num_ctx
+        self._num_predict = num_predict
         self._num_thread = num_thread
         self._system_prompt = system_prompt
         self._think = think
@@ -176,10 +178,22 @@ class OllamaBackend:
             full_messages.append({"role": "system", "content": sys_prompt})
         full_messages.extend(messages)
 
+        # qwen3 respects /no_think in the last user message to suppress thinking.
+        # The Ollama `think` param only works if the template handles it; this is
+        # a reliable fallback that works regardless of the modelfile template.
+        if not self._think:
+            for msg in reversed(full_messages):
+                if msg["role"] == "user":
+                    if "/no_think" not in msg["content"]:
+                        msg["content"] += " /no_think"
+                    break
+
         options: dict[str, Any] = {
             "temperature": self._temperature,
             "num_ctx": self._num_ctx,
         }
+        if self._num_predict is not None:
+            options["num_predict"] = self._num_predict
         if self._num_thread is not None:
             options["num_thread"] = self._num_thread
 

@@ -134,7 +134,9 @@ class AssistantFSM:
         else:  # WAKE_WORD
             try:
                 next(self._wake_gen)  # blocks until detection; mic released on return
-                self.tts.play_greeting()
+                proc = self.tts.play_greeting()
+                if proc is not None:
+                    proc.wait()  # wait for greeting to finish before recording
                 return State.SESSION_CHECK, {}
             except (StopIteration, KeyboardInterrupt):
                 return State.SHUTDOWN, {}
