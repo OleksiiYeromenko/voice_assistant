@@ -5,9 +5,10 @@ Each tool is:
   - A Python function that executes the tool
 """
 
-import json
 import logging
 from typing import Any
+
+from src.tools.timers import cancel_timer, list_timers, set_timer
 
 log = logging.getLogger(__name__)
 
@@ -163,10 +164,97 @@ RECALL_TOOL = {
 }
 
 
+TIMER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "set_timer",
+        "description": (
+            "Set a countdown timer. When the time is up the assistant will speak an alert aloud. "
+            "Convert natural language durations to seconds (e.g. '5 minutes' → 300, "
+            "'1 hour 30 minutes' → 5400)."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["duration_seconds"],
+            "properties": {
+                "duration_seconds": {
+                    "type": "integer",
+                    "description": "How long to count down, in seconds.",
+                },
+                "label": {
+                    "type": "string",
+                    "description": (
+                        "Short name for this timer, e.g. 'pasta', 'eggs'. "
+                        "Defaults to 'timer'."
+                    ),
+                },
+            },
+        },
+    },
+}
+
+CANCEL_TIMER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "cancel_timer",
+        "description": "Cancel an active timer by its label.",
+        "parameters": {
+            "type": "object",
+            "required": [],
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "description": "Timer label to cancel. Defaults to 'timer'.",
+                },
+            },
+        },
+    },
+}
+
+LIST_TIMERS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_timers",
+        "description": "List all currently active timers by label.",
+        "parameters": {
+            "type": "object",
+            "required": [],
+            "properties": {},
+        },
+    },
+}
+
+RECIPE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "find_recipe",
+        "description": (
+            "Search for a recipe by dish name or main ingredient and return the full recipe "
+            "with ingredients and step-by-step instructions, formatted for reading aloud."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Dish name or key ingredient, e.g. 'apple pancakes', 'chicken soup', "
+                        "'beef stew'."
+                    ),
+                },
+            },
+        },
+    },
+}
+
+
 # All available tool schemas
 ALL_TOOLS = [
     WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL, SHOPPING_LIST_TOOL,
     REMEMBER_TOOL, RECALL_TOOL,
+    TIMER_TOOL, CANCEL_TIMER_TOOL, LIST_TIMERS_TOOL,
+    RECIPE_TOOL,
 ]
 
 # Tools whose results go stale immediately (e.g., time changes every minute).
@@ -340,6 +428,50 @@ def web_search(query: str) -> str:
 _SHOPPING_LIST_FILE = "data/shopping_list.txt"
 
 
+def find_recipe(query: str) -> str:
+    """Search TheMealDB for a recipe and return it formatted for voice playback."""
+    import httpx
+
+    try:
+        resp = httpx.get(
+            "https://www.themealdb.com/api/json/v1/1/search.php",
+            params={"s": query},
+            timeout=8,
+        )
+        data = resp.json()
+    except Exception as e:
+        return f"Could not fetch recipe: {e}"
+
+    meals = data.get("meals")
+    if not meals:
+        return f"No recipe found for '{query}'. Try a more general name or ask me to web search."
+
+    meal = meals[0]
+    name = meal["strMeal"]
+    category = meal.get("strCategory", "").strip()
+    area = meal.get("strArea", "").strip()
+
+    # TheMealDB stores up to 20 ingredient/measure pairs
+    ingredients = []
+    for i in range(1, 21):
+        ing = (meal.get(f"strIngredient{i}") or "").strip()
+        measure = (meal.get(f"strMeasure{i}") or "").strip()
+        if ing:
+            ingredients.append(f"{measure} {ing}".strip() if measure else ing)
+
+    # Clean instructions and split into steps
+    instructions = (meal.get("strInstructions") or "").replace("\r\n", "\n").replace("\r", "\n")
+    steps = [s.strip() for s in instructions.split("\n") if s.strip()]
+    numbered_steps = " ".join(f"Step {i}: {s}" for i, s in enumerate(steps, 1))
+
+    header = f"Recipe: {name}"
+    if category or area:
+        header += f" ({', '.join(filter(None, [area, category]))})"
+
+    ing_block = "Ingredients: " + "; ".join(ingredients) + "."
+    return f"{header}. {ing_block} {numbered_steps}"
+
+
 def add_to_shopping_list(item: str) -> str:
     """Add item to local shopping list file."""
     from pathlib import Path
@@ -362,6 +494,10 @@ _TOOL_FUNCTIONS: dict[str, callable] = {
     "get_time": get_time,
     "web_search": web_search,
     "add_to_shopping_list": add_to_shopping_list,
+    "find_recipe": find_recipe,
+    "set_timer": set_timer,
+    "cancel_timer": cancel_timer,
+    "list_timers": list_timers,
 }
 
 
