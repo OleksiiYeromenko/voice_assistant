@@ -8,13 +8,11 @@ States:
     SESSION_CHECK  — check inactivity timeout, rotate session if expired
     LISTENING      — STT: record + transcribe (mic owned by STT)
     THINKING       — route + LLM + tool loop + streaming TTS
-    INTERRUPTED    — TTS aborted by wake word, transition to LISTENING
     SHUTDOWN       — close session, exit
 """
 
 import logging
 import sys
-import threading
 import time
 from enum import Enum, auto
 
@@ -26,7 +24,6 @@ class State(Enum):
     SESSION_CHECK = auto()
     LISTENING = auto()
     THINKING = auto()
-    INTERRUPTED = auto()
     SHUTDOWN = auto()
 
 
@@ -81,7 +78,6 @@ class AssistantFSM:
             State.SESSION_CHECK: self._state_session_check,
             State.LISTENING: self._state_listening,
             State.THINKING: self._state_thinking,
-            State.INTERRUPTED: self._state_interrupted,
             State.SHUTDOWN: self._state_shutdown,
         }
 
@@ -188,7 +184,7 @@ class AssistantFSM:
     # State: THINKING
     # ------------------------------------------------------------------
     def _state_thinking(self, ctx: dict) -> tuple[State, dict]:
-        """Route, run LLM with tools, stream TTS. Handle interruption."""
+        """Route, run LLM with tools, stream TTS."""
         from src.llm.backends import GeminiBackend, OllamaBackend
         from src.main import run_llm_with_tools, run_streaming_llm
         from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
@@ -226,29 +222,6 @@ class AssistantFSM:
         # Tell the model which backend it's running on
         model_info = f"You are running as: {backend.name} (backend: {decision.backend_key})"
         system_prompt = self.memory.build_system_prompt(model_info=model_info) if self.memory else ""
-
-        # Start interrupt listener (wake word mode only)
-        interrupt_thread = None
-        interrupt_stop = None
-        interrupted = False
-
-        if self.wake_detector is not None:
-            interrupt_stop = threading.Event()
-
-            def _listen():
-                nonlocal interrupted
-                try:
-                    if self.wake_detector.detect_once(timeout_s=120, stop_event=interrupt_stop):
-                        log.info("Wake word during TTS — interrupting")
-                        interrupted = True
-                        self.tts.interrupt()
-                except Exception as e:
-                    log.debug(f"Interrupt listener error: {e}")
-
-            interrupt_thread = threading.Thread(
-                target=_listen, daemon=True, name="interrupt-listener",
-            )
-            interrupt_thread.start()
 
         # LLM + Tools + TTS
         tools_used: set[str] = set()
@@ -296,12 +269,6 @@ class AssistantFSM:
             else:
                 response = "Sorry, I'm having trouble right now."
                 self.tts.speak(response)
-        finally:
-            # CRITICAL: stop interrupt listener before returning so its arecord
-            # releases the mic. Otherwise listen() can't reopen the device.
-            if interrupt_thread is not None:
-                interrupt_stop.set()
-                interrupt_thread.join(timeout=2)
 
         # Store response in conversation history
         if tools_used & VOLATILE_TOOLS:
@@ -334,17 +301,7 @@ class AssistantFSM:
 
         self.last_interaction_time = time.time()
 
-        if interrupted:
-            return State.INTERRUPTED, {}
         return State.IDLE, {}
-
-    # ------------------------------------------------------------------
-    # State: INTERRUPTED
-    # ------------------------------------------------------------------
-    def _state_interrupted(self, ctx: dict) -> tuple[State, dict]:
-        """TTS was interrupted by wake word — go straight to LISTENING."""
-        log.info("Interrupted — listening for new query")
-        return State.LISTENING, {}
 
     # ------------------------------------------------------------------
     # State: SHUTDOWN

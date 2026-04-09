@@ -60,14 +60,10 @@ class _DelayedSound:
         except Exception:
             pass
 
-    def wait(self, interrupted_fn, poll_interval: float = 0.05) -> bool:
-        """Poll until delay+playback thread finishes. Returns False if interrupted."""
+    def wait(self, poll_interval: float = 0.05):
+        """Block until delay+playback thread finishes."""
         while self._thread.is_alive():
-            if interrupted_fn():
-                self.cancel()
-                return False
             time.sleep(poll_interval)
-        return True
 
     def cancel(self):
         """Stop delay or kill aplay if already started."""
@@ -90,7 +86,6 @@ class TTSEngine:
     ):
         self.voice = voice
         self.aplay_device = aplay_device
-        self._interrupted = False
         self._beep_wav: bytes | None = None
         self._startup_sounds: list[Path] = []
         self._greeting_sounds: list[Path] = []
@@ -115,16 +110,6 @@ class TTSEngine:
             target_list.extend(sorted(category_dir.glob("*.wav")))
             if target_list:
                 log.info(f"Found {len(target_list)} {category} sound(s) in {category_dir}")
-
-    # ------------------------------------------------------------------
-    # Interrupt mechanism
-    # ------------------------------------------------------------------
-    def interrupt(self):
-        """Signal TTS to stop playback immediately."""
-        self._interrupted = True
-
-    def _reset_interrupt(self):
-        self._interrupted = False
 
     # ------------------------------------------------------------------
     # Acknowledgment beep
@@ -249,33 +234,24 @@ class TTSEngine:
         proc.stdin.close()
         return proc
 
-    def _wait_for_pre(self, pre_proc) -> bool:
+    def _wait_for_pre(self, pre_proc):
         """Wait for a pre-play sound — handles both Popen and _DelayedSound."""
         if isinstance(pre_proc, _DelayedSound):
-            return pre_proc.wait(lambda: self._interrupted)
-        return self._wait_for_playback(pre_proc)
+            pre_proc.wait()
+        else:
+            self._wait_for_playback(pre_proc)
 
     def _wait_for_playback(self, proc: subprocess.Popen | None, poll_interval: float = 0.05):
-        """Wait for playback process, polling periodically for interrupt.
-
-        Returns True if playback completed normally, False if interrupted.
-        """
+        """Wait for playback process to finish."""
         if proc is None:
-            return True
+            return
 
         try:
-            while proc.poll() is None:
-                if self._interrupted:
-                    proc.terminate()
-                    proc.wait()
-                    return False
-                time.sleep(poll_interval)
-
+            proc.wait()
             if proc.returncode != 0:
                 stderr = proc.stderr.read().decode().strip() if proc.stderr else ""
                 if stderr:
                     log.error(f"Playback error: {stderr}")
-            return True
         finally:
             if proc.stderr:
                 proc.stderr.close()
@@ -312,16 +288,12 @@ class TTSEngine:
             for text in tts.stream_speak(llm_token_generator):
                 print(text, end="", flush=True)
         """
-        self._reset_interrupt()
         buffer = ""
         play_proc: subprocess.Popen | None = None
         stream_start = time.perf_counter()
         first_chunk_recorded = False
 
         for token in token_stream:
-            if self._interrupted:
-                break
-
             buffer += token
             yield token  # Pass through for display
 
@@ -338,18 +310,13 @@ class TTSEngine:
                         log.debug(f"TTS sentence: '{complete}'")
                         wav_data, synth_time = self.synthesize(complete)
 
-                        if self._interrupted:
-                            break  # Interrupted during synthesis — discard result
-
                         # Before first TTS playback, wait for thinking sound to finish
                         if pre_proc is not None:
-                            if not self._wait_for_pre(pre_proc):
-                                break  # Interrupted during thinking sound
+                            self._wait_for_pre(pre_proc)
                             pre_proc = None
 
                         # Wait for previous playback, then start new one (non-blocking)
-                        if not self._wait_for_playback(play_proc):
-                            break  # Interrupted during wait
+                        self._wait_for_playback(play_proc)
                         play_proc = self._start_playback(wav_data)
 
                         # Track time to first audio chunk
@@ -359,18 +326,17 @@ class TTSEngine:
                             ) * 1000
                             first_chunk_recorded = True
 
-        # Speak any remaining text in buffer (skip if interrupted)
-        if not self._interrupted:
-            remaining = buffer.strip()
-            if remaining:
-                log.debug(f"TTS remainder: '{remaining}'")
-                wav_data, _ = self.synthesize(remaining)
-                # In case no sentence boundary was hit, still wait for thinking sound
-                if pre_proc is not None:
-                    self._wait_for_pre(pre_proc)
-                    pre_proc = None
-                if self._wait_for_playback(play_proc):
-                    play_proc = self._start_playback(wav_data)
+        # Speak any remaining text in buffer
+        remaining = buffer.strip()
+        if remaining:
+            log.debug(f"TTS remainder: '{remaining}'")
+            wav_data, _ = self.synthesize(remaining)
+            # In case no sentence boundary was hit, still wait for thinking sound
+            if pre_proc is not None:
+                self._wait_for_pre(pre_proc)
+                pre_proc = None
+            self._wait_for_playback(play_proc)
+            play_proc = self._start_playback(wav_data)
 
-        # Wait for final playback to complete (or interrupted)
+        # Wait for final playback to complete
         self._wait_for_playback(play_proc)

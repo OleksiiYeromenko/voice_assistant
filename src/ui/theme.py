@@ -23,7 +23,6 @@ STATE_COLORS: dict[str, tuple[str, str]] = {
     "SESSION_CHECK": ("#2D3748", "#718096"),
     "LISTENING":     ("#1B5E20", "#69F0AE"),
     "THINKING":      ("#4A3000", "#FFB300"),
-    "INTERRUPTED":   ("#4A1500", "#FF7043"),
     "SHUTDOWN":      ("#1A0000", "#EF5350"),
 }
 

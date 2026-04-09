@@ -72,8 +72,8 @@ lbl(f"DISPLAY={os.environ.get('DISPLAY','?')}  WAYLAND={os.environ.get('WAYLAND_
 tick_label = lbl("Tick: 0", "#FF7043", 16)
 
 tick = [0]
-states = ["IDLE", "LISTENING", "THINKING", "INTERRUPTED"]
-colors = ["#718096", "#69F0AE", "#FFB300", "#FF7043"]
+states = ["IDLE", "LISTENING", "THINKING"]
+colors = ["#718096", "#69F0AE", "#FFB300"]
 
 def on_tick():
     tick[0] += 1
