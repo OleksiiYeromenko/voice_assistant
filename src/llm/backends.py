@@ -81,7 +81,7 @@ class OllamaBackend:
         import ollama
         self._client = ollama.Client(
             host=base_url,
-            timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0),
+            timeout=httpx.Timeout(connect=2.0, read=300.0, write=30.0, pool=10.0),
         )
         self._base_url = base_url.rstrip("/")   # stored for is_loaded() / diagnostics
         self._model = model

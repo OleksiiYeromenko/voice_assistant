@@ -14,8 +14,10 @@ from src.memory import MarkdownMemoryStore
 from src.monitor import LatencyRecord, Timer, snapshot
 from src.stt.engine import STTEngine
 from src.tts.engine import TTSEngine
-from src.llm.backends import OllamaBackend, ClaudeBackend, GeminiBackend, ToolCall, check_ollama_connectivity
-from src.router.router import ModelRouter
+from src.llm.backends import (
+    OllamaBackend, ClaudeBackend, GeminiBackend, ToolCall, check_ollama_connectivity
+)
+from src.router.router import ModelRouter, RemoteAvailabilityMonitor
 from src.tools.executor import ALL_TOOLS, execute_tool, register_tool
 
 log = logging.getLogger(__name__)
@@ -391,10 +393,17 @@ def assistant_loop(cfg: dict):
                 f"first query may be slow"
             )
 
+    # Background monitor: re-checks remote Ollama every 60s so the router
+    # can switch default_backend_key dynamically if GPU PC goes down or comes back.
+    remote_url = cfg["llm"].get("remote_base_url", "http://192.168.1.74:11434")
+    monitor = RemoteAvailabilityMonitor(remote_url, check_interval=60)
+    monitor.start(initial_state=(default_key == "remote"))
+
     router = ModelRouter(
         backends=backends,
         triggers=cfg["llm"]["router"]["triggers"],
         default_backend_key=default_key,
+        monitor=monitor,
     )
 
     # Persistent memory (.md files for profile/facts, SQLite for sessions)

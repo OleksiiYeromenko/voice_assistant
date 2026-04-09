@@ -9,11 +9,49 @@ Priority:
 
 import logging
 import re
+import threading
+import time
 from dataclasses import dataclass
 
-from src.llm.backends import LLMBackend
+from src.llm.backends import LLMBackend, check_ollama_connectivity
 
 log = logging.getLogger(__name__)
+
+
+class RemoteAvailabilityMonitor:
+    """Background thread that periodically checks if the remote Ollama server is up.
+
+    The router reads `is_up` on every route() call and adjusts default_backend_key
+    accordingly, so the assistant automatically recovers when the GPU PC comes back
+    online or switches to local when it goes down — without any user intervention.
+    """
+
+    def __init__(self, remote_url: str, check_interval: int = 60):
+        self._url = remote_url
+        self._interval = check_interval
+        self._is_up = False
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="remote-availability")
+
+    def start(self, initial_state: bool) -> None:
+        with self._lock:
+            self._is_up = initial_state
+        self._thread.start()
+
+    @property
+    def is_up(self) -> bool:
+        with self._lock:
+            return self._is_up
+
+    def _loop(self) -> None:
+        while True:
+            time.sleep(self._interval)
+            result = check_ollama_connectivity(self._url, timeout=2.0)
+            with self._lock:
+                prev = self._is_up
+                self._is_up = result
+            if result != prev:
+                log.info(f"Remote Ollama at {self._url} is now {'UP' if result else 'DOWN'}")
 
 
 @dataclass
@@ -29,11 +67,13 @@ class ModelRouter:
         backends: dict[str, LLMBackend],
         triggers: dict[str, list[str]] | None = None,
         default_backend_key: str = "local",
+        monitor: RemoteAvailabilityMonitor | None = None,
     ):
         self.backends = backends
         self.triggers = triggers or {}
         self.default_backend_key = default_backend_key
         self.session_preference: str | None = None  # Sticky preference
+        self._monitor = monitor
 
     def route(self, text: str) -> RouteDecision:
         """Decide which backend to use for this text."""
@@ -76,7 +116,15 @@ class ModelRouter:
                 cleaned_text=text,
             )
 
-        # 3. Default: remote (if reachable at startup) or local
+        # 3. Default: remote (if reachable at startup) or local.
+        # Sync with live remote availability — only affects the default path;
+        # explicit triggers and session_preference (steps 1 & 2) are unaffected.
+        if self._monitor is not None and "remote" in self.backends:
+            new_default = "remote" if self._monitor.is_up else "local"
+            if new_default != self.default_backend_key:
+                log.info(f"Remote availability changed → default is now {new_default}")
+                self.default_backend_key = new_default
+
         return RouteDecision(
             backend_key=self.default_backend_key,
             reason=f"default → {self.default_backend_key}",
