@@ -86,12 +86,29 @@ def list_models(client: ollama.Client) -> list[str]:
     return sorted(m.model for m in resp.models)
 
 
+def unload_model(client: ollama.Client, model: str) -> None:
+    """Tell Ollama to evict the model from RAM (keep_alive=0)."""
+    try:
+        client.chat(model=model, messages=[{"role": "user", "content": ""}], keep_alive=0)
+    except Exception:
+        pass
+
+
+def _chat_no_think(client: ollama.Client, **kwargs) -> Any:
+    """Call client.chat with think=False; fall back if the kwarg isn't supported."""
+    try:
+        return client.chat(**kwargs, think=False)
+    except TypeError:
+        return client.chat(**kwargs)
+
+
 def warm_model(client: ollama.Client, model: str) -> float:
     """Load model into memory and return load time in seconds."""
     t0 = time.perf_counter()
-    client.chat(
+    _chat_no_think(
+        client,
         model=model,
-        messages=[{"role": "user", "content": "hi"}],
+        messages=[{"role": "user", "content": "hi /no_think"}],
         options={"num_predict": 1, "num_ctx": 32},
     )
     return time.perf_counter() - t0
@@ -107,7 +124,7 @@ def bench_prompt(
     """Stream a single prompt and measure performance."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
+        {"role": "user", "content": prompt + " /no_think"},
     ]
 
     options: dict[str, Any] = {"temperature": 0.7, "num_ctx": num_ctx}
@@ -118,7 +135,8 @@ def bench_prompt(
     t_first: float | None = None
     tok_count = 0
 
-    for chunk in client.chat(
+    for chunk in _chat_no_think(
+        client,
         model=model,
         messages=messages,
         stream=True,
@@ -178,6 +196,10 @@ def bench_model(
                 f"{run.tok_per_s:.1f} tok/s, "
                 f"total {run.total_s:.2f}s"
             )
+
+    print(f"  Unloading...", end=" ", flush=True)
+    unload_model(client, model)
+    print("done")
 
     return result
 
