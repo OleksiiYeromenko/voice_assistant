@@ -4,9 +4,8 @@
 Goal: determine whether gemma4:e2b (or another local multimodal model) can
 replace faster-whisper for STT, eliminating those heavy dependencies.
 
-Tries two strategies:
-  A) Direct audio: send raw WAV bytes as base64 via Ollama multimodal API
-  B) Spectrogram: convert WAV to a mel spectrogram PNG and send as image
+Records audio via arecord and sends raw WAV bytes as base64 to the Ollama
+multimodal API.
 
 Usage:
   uv run scripts/test_gemma_stt.py
@@ -15,6 +14,8 @@ Usage:
 
 import argparse
 import base64
+import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -24,33 +25,90 @@ from pathlib import Path
 sys.path.insert(0, ".")
 
 
-def record_audio(duration: float = 10.0) -> tuple[bytes, str]:
-    """Record audio from mic, return (raw WAV bytes, temp file path)."""
-    from src.config import load_config
-    from src.stt.engine import STTEngine
+def find_alsa_capture_device() -> str:
+    """Find the USB capture device using arecord -l. Returns ALSA hw string."""
+    result = subprocess.run(["arecord", "-l"], capture_output=True, text=True)
+    print("  arecord -l output:")
+    for line in result.stdout.strip().splitlines():
+        print(f"    {line}")
 
-    cfg = load_config()
-    alsa_dev = cfg["stt"].get("alsa_device")
-    stt = STTEngine(alsa_device=alsa_dev)
+    for line in result.stdout.splitlines():
+        if "USB" in line:
+            m = re.search(r"card\s+(\d+):.*device\s+(\d+):", line)
+            if m:
+                hw = f"plughw:{m.group(1)},{m.group(2)}"
+                print(f"\n  Using ALSA device: {hw}")
+                return hw
 
-    print(f"  Recording (up to {duration:.0f}s, stops on silence)...")
-    audio_np = stt.record_utterance(max_duration_s=duration, silence_timeout_s=2.0)
+    print("\n  No USB device parsed, falling back to plughw:1,0")
+    return "plughw:1,0"
 
-    # Save to temp WAV file (16-bit PCM, 16 kHz, mono)
+
+def release_device(device: str):
+    """Kill any processes holding the capture device, including their parents."""
+    import os
+    import signal
+
+    card_num = device.split(":")[1].split(",")[0]
+    dev_path = f"/dev/snd/pcmC{card_num}D0c"
+
+    result = subprocess.run(["fuser", dev_path], capture_output=True, text=True)
+    pids = [int(p) for p in (result.stdout + result.stderr).split() if p.strip().isdigit()]
+
+    if pids:
+        print(f"  Processes holding {dev_path}: {pids}")
+        # Kill parent processes too (e.g. the voice assistant that spawned arecord)
+        parent_pids = set()
+        for pid in pids:
+            try:
+                with open(f"/proc/{pid}/status") as f:
+                    for line in f:
+                        if line.startswith("PPid:"):
+                            ppid = int(line.split()[1])
+                            if ppid > 1:
+                                parent_pids.add(ppid)
+            except OSError:
+                pass
+        for ppid in parent_pids:
+            print(f"  Killing parent PID {ppid}")
+            try:
+                os.kill(ppid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        subprocess.run(["fuser", "-k", dev_path], capture_output=True)
+        time.sleep(2)
+    else:
+        print(f"  {dev_path} is free")
+
+
+def record_arecord(device: str, duration_s: float) -> tuple[bytes, str]:
+    """Record via arecord at 16 kHz. Returns (WAV bytes, temp file path)."""
     tmp = tempfile.mktemp(suffix=".wav", prefix="gemma_stt_")
-    with wave.open(tmp, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)  # int16 = 2 bytes
-        wf.setframerate(16000)
-        wf.writeframes(audio_np.tobytes())
+    cmd = [
+        "arecord",
+        "-D", device,
+        "-f", "S16_LE",
+        "-c", "1",
+        "-r", "16000",
+        "-d", str(int(duration_s)),
+        "-t", "wav",
+        tmp,
+    ]
+    print(f"  Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=int(duration_s) + 5)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"arecord failed: {result.stderr.strip()}")
 
     wav_bytes = Path(tmp).read_bytes()
-    print(f"  Recorded {len(audio_np) / 16000:.1f}s ({len(wav_bytes)} bytes WAV)")
+    with wave.open(tmp) as wf:
+        n_frames = wf.getnframes()
+    print(f"  Recorded {n_frames / 16000:.1f}s ({len(wav_bytes)} bytes WAV)")
     return wav_bytes, tmp
 
 
 def try_direct_audio(model: str, wav_bytes: bytes) -> tuple[str | None, float]:
-    """Strategy A: send WAV as base64 audio to Ollama. Returns (text, latency_s)."""
+    """Send WAV as base64 to Ollama. Returns (text, latency_s)."""
     import ollama
 
     b64 = base64.b64encode(wav_bytes).decode()
@@ -58,90 +116,6 @@ def try_direct_audio(model: str, wav_bytes: bytes) -> tuple[str | None, float]:
         {
             "role": "user",
             "content": "Transcribe this audio exactly. Output only the spoken words, nothing else.",
-            "images": [b64],  # Ollama uses 'images' field for all binary blobs
-        }
-    ]
-    t0 = time.perf_counter()
-    try:
-        resp = ollama.chat(model=model, messages=messages)
-        elapsed = time.perf_counter() - t0
-        return resp["message"]["content"].strip(), elapsed
-    except Exception as e:
-        elapsed = time.perf_counter() - t0
-        print(f"  Strategy A failed: {e}")
-        return None, elapsed
-
-
-def make_spectrogram_png(wav_bytes: bytes) -> bytes:
-    """Convert WAV bytes to a mel spectrogram PNG in memory."""
-    import io
-    import struct
-
-    import numpy as np
-    from scipy.signal import spectrogram as scipy_spectrogram
-
-    # Parse WAV
-    with wave.open(io.BytesIO(wav_bytes)) as wf:
-        n_frames = wf.getnframes()
-        raw = wf.readframes(n_frames)
-        sample_rate = wf.getframerate()
-
-    audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-
-    # Compute spectrogram
-    freqs, times, Sxx = scipy_spectrogram(audio, fs=sample_rate, nperseg=512, noverlap=384)
-    Sxx_db = 10 * np.log10(Sxx + 1e-10)
-
-    # Normalize to 0–255 grayscale
-    Sxx_norm = (Sxx_db - Sxx_db.min()) / (Sxx_db.max() - Sxx_db.min() + 1e-10)
-    img_array = (Sxx_norm * 255).astype(np.uint8)
-    # Flip freq axis so low freqs at bottom
-    img_array = np.flipud(img_array)
-
-    # Write as PNG using only stdlib
-    height, width = img_array.shape
-    buf = io.BytesIO()
-
-    def write_chunk(chunk_type: bytes, data: bytes):
-        import zlib
-        length = len(data)
-        buf.write(struct.pack(">I", length))
-        buf.write(chunk_type)
-        buf.write(data)
-        crc = zlib.crc32(chunk_type + data) & 0xFFFFFFFF
-        buf.write(struct.pack(">I", crc))
-
-    import zlib
-
-    buf.write(b"\x89PNG\r\n\x1a\n")  # PNG signature
-    # IHDR
-    ihdr = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
-    write_chunk(b"IHDR", ihdr)
-    # IDAT — raw image data with filter byte 0 per row
-    raw_rows = b"".join(b"\x00" + bytes(img_array[y]) for y in range(height))
-    write_chunk(b"IDAT", zlib.compress(raw_rows))
-    write_chunk(b"IEND", b"")
-
-    return buf.getvalue()
-
-
-def try_spectrogram(model: str, wav_bytes: bytes) -> tuple[str | None, float]:
-    """Strategy B: send mel spectrogram as image. Returns (text, latency_s)."""
-    import ollama
-
-    print("  Generating spectrogram image...")
-    png_bytes = make_spectrogram_png(wav_bytes)
-    b64 = base64.b64encode(png_bytes).decode()
-    print(f"  Spectrogram PNG: {len(png_bytes)} bytes")
-
-    messages = [
-        {
-            "role": "user",
-            "content": (
-                "This is a mel spectrogram of someone speaking. "
-                "Low frequencies are at the bottom, time flows left to right. "
-                "What words are being spoken? Output only the spoken words."
-            ),
             "images": [b64],
         }
     ]
@@ -152,28 +126,29 @@ def try_spectrogram(model: str, wav_bytes: bytes) -> tuple[str | None, float]:
         return resp["message"]["content"].strip(), elapsed
     except Exception as e:
         elapsed = time.perf_counter() - t0
-        print(f"  Strategy B failed: {e}")
+        print(f"  Failed: {e}")
         return None, elapsed
 
 
 def run_whisper_comparison(wav_path: str) -> tuple[str, float]:
     """Run faster-whisper on the saved WAV for comparison."""
-    from src.stt.engine import STTEngine
-
-    stt = STTEngine(model_size="base.en")
-    stt.load()
     import numpy as np
+    from faster_whisper import WhisperModel
 
+    model = WhisperModel("base.en", device="cpu", compute_type="int8", cpu_threads=4)
     with wave.open(wav_path) as wf:
         raw = wf.readframes(wf.getnframes())
-    audio_np = np.frombuffer(raw, dtype=np.int16)
-    return stt.transcribe(audio_np)
+    audio_f32 = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    t0 = time.perf_counter()
+    segments, _ = model.transcribe(audio_f32, beam_size=1, language="en", vad_filter=True)
+    text = " ".join(s.text.strip() for s in segments).strip()
+    return text, time.perf_counter() - t0
 
 
 def main():
     parser = argparse.ArgumentParser(description="Test local Gemma model for STT")
     parser.add_argument("--model", default="gemma4:e2b", help="Ollama model name")
-    parser.add_argument("--duration", type=float, default=10.0, help="Max recording seconds")
+    parser.add_argument("--duration", type=float, default=10.0, help="Recording seconds")
     parser.add_argument("--compare", action="store_true", help="Also run Whisper for comparison")
     parser.add_argument("--keep-wav", action="store_true", help="Don't delete temp WAV file")
     args = parser.parse_args()
@@ -182,52 +157,41 @@ def main():
     print(f"Gemma STT Test — model: {args.model}")
     print("=" * 60)
 
-    # Step 1: Record
-    wav_bytes, wav_path = record_audio(duration=args.duration)
+    device = find_alsa_capture_device()
+    release_device(device)
 
-    # Step 2: Strategy A — direct audio
-    print(f"\n[Strategy A] Sending WAV directly to {args.model}...")
-    text_a, lat_a = try_direct_audio(args.model, wav_bytes)
-    if text_a is not None:
-        print(f"  Result:   {text_a!r}")
-        print(f"  Latency:  {lat_a:.2f}s")
+    print(f"\n>>> Speak now! Recording {args.duration:.0f}s... <<<")
+    wav_bytes, wav_path = record_arecord(device, args.duration)
+
+    print(f"\nSending WAV to {args.model}...")
+    text, latency = try_direct_audio(args.model, wav_bytes)
+    if text is not None:
+        print(f"  Result:  {text!r}")
+        print(f"  Latency: {latency:.2f}s")
     else:
-        # Step 3: Strategy B — spectrogram image
-        print(f"\n[Strategy B] Sending spectrogram image to {args.model}...")
-        text_b, lat_b = try_spectrogram(args.model, wav_bytes)
-        if text_b is not None:
-            print(f"  Result:   {text_b!r}")
-            print(f"  Latency:  {lat_b:.2f}s")
-        else:
-            print("  Both strategies failed — model may not support multimodal input.")
+        print("  No output — model may not support audio input.")
 
-    # Step 4: Whisper comparison
     if args.compare:
         print("\n[Whisper comparison]")
         whisper_text, whisper_lat = run_whisper_comparison(wav_path)
-        print(f"  Result:   {whisper_text!r}")
-        print(f"  Latency:  {whisper_lat:.2f}s")
+        print(f"  Result:  {whisper_text!r}")
+        print(f"  Latency: {whisper_lat:.2f}s")
 
-        # Verdict
-        gemma_result = text_a if text_a else (text_b if text_b else None)
         print("\n" + "=" * 60)
-        print("VERDICT")
-        print("=" * 60)
-        if gemma_result:
-            print(f"  Gemma:   {gemma_result!r}")
-            print(f"  Whisper: {whisper_text!r}")
-            print()
-            if gemma_result.lower().strip() == whisper_text.lower().strip():
-                print("  => MATCH — Gemma can likely replace Whisper")
+        if text:
+            if text.lower().strip() == whisper_text.lower().strip():
+                print("=> MATCH — Gemma can likely replace Whisper")
             else:
-                print("  => DIFFERENT — manual comparison needed")
+                print("=> DIFFERENT — manual comparison needed")
+                print(f"   Gemma:   {text!r}")
+                print(f"   Whisper: {whisper_text!r}")
         else:
-            print("  => Gemma produced no output — keep Whisper")
+            print("=> Gemma produced no output — keep Whisper")
 
-    if not args.keep_wav:
-        Path(wav_path).unlink(missing_ok=True)
+    if args.keep_wav:
+        print(f"\nWAV saved: {wav_path}")
     else:
-        print(f"\n  WAV saved: {wav_path}")
+        Path(wav_path).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
