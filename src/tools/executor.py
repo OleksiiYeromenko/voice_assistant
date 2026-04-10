@@ -8,7 +8,7 @@ Each tool is:
 import logging
 from typing import Any
 
-from src.tools.timers import cancel_timer, list_timers, set_timer
+from src.tools.timers import cancel_timer, set_timer
 
 log = logging.getLogger(__name__)
 
@@ -21,25 +21,15 @@ WEATHER_TOOL = {
     "type": "function",
     "function": {
         "name": "get_weather",
-        "description": (
-            "Get current weather or a multi-day forecast for a city. "
-            "Use forecast_days=0 for current conditions, forecast_days=1 for tomorrow, "
-            "forecast_days=3 for the next 3 days, forecast_days=7 for the week ahead."
-        ),
+        "description": "Get current weather or forecast for a city.",
         "parameters": {
             "type": "object",
             "required": ["city"],
             "properties": {
-                "city": {
-                    "type": "string",
-                    "description": "City name, e.g. 'London' or 'New York'",
-                },
+                "city": {"type": "string", "description": "City name"},
                 "forecast_days": {
                     "type": "integer",
-                    "description": (
-                        "0 = current conditions (default), "
-                        "1 = tomorrow, 2-7 = that many days ahead starting tomorrow"
-                    ),
+                    "description": "0=current(default), 1=tomorrow, 2-7=days ahead",
                 },
             },
         },
@@ -50,19 +40,12 @@ WEB_SEARCH_TOOL = {
     "type": "function",
     "function": {
         "name": "web_search",
-        "description": (
-            "Search the web for current information. Use for: current prices, "
-            "live data, recent news, sports scores, stock prices, or any factual "
-            "question requiring up-to-date information."
-        ),
+        "description": "Search the web for current information.",
         "parameters": {
             "type": "object",
             "required": ["query"],
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query — be specific, e.g. 'gold price per ounce today'",
-                },
+                "query": {"type": "string", "description": "Search query"},
             },
         },
     },
@@ -72,20 +55,14 @@ TIME_TOOL = {
     "type": "function",
     "function": {
         "name": "get_time",
-        "description": (
-            "Get the current date and time. Use when the user asks 'what time is it', "
-            "'what's the date', or asks about the time in another city/timezone."
-        ),
+        "description": "Get current date and time, optionally for another city/timezone.",
         "parameters": {
             "type": "object",
             "required": [],
             "properties": {
                 "location": {
                     "type": "string",
-                    "description": (
-                        "Optional city or timezone. Leave empty for local time. "
-                        "Examples: 'London', 'Tokyo', 'New York', 'America/Chicago'"
-                    ),
+                    "description": "City or IANA timezone. Empty = local time.",
                 },
             },
         },
@@ -96,15 +73,12 @@ SHOPPING_LIST_TOOL = {
     "type": "function",
     "function": {
         "name": "add_to_shopping_list",
-        "description": "Add an item to the shopping list. Use this when the user wants to add something to buy.",
+        "description": "Add an item to the shopping list.",
         "parameters": {
             "type": "object",
             "required": ["item"],
             "properties": {
-                "item": {
-                    "type": "string",
-                    "description": "Item to add, e.g. 'milk', '2 kg potatoes'",
-                },
+                "item": {"type": "string", "description": "Item to add"},
             },
         },
     },
@@ -115,23 +89,12 @@ REMEMBER_TOOL = {
     "type": "function",
     "function": {
         "name": "remember",
-        "description": (
-            "Store information about the user for future reference. "
-            "Use this when the user says 'remember that...', 'my name is...', "
-            "'I like...', 'always use...', 'prefer...', 'never...', or shares "
-            "important personal information or preferences."
-        ),
+        "description": "Store a fact or preference about the user for future reference.",
         "parameters": {
             "type": "object",
             "required": ["fact"],
             "properties": {
-                "fact": {
-                    "type": "string",
-                    "description": (
-                        "The information to remember, e.g. 'User prefers metric units' "
-                        "or 'always use 24h time format'"
-                    ),
-                },
+                "fact": {"type": "string", "description": "Information to store"},
             },
         },
     },
@@ -142,21 +105,14 @@ RECALL_TOOL = {
     "type": "function",
     "function": {
         "name": "recall",
-        "description": (
-            "Search past conversations or list what is known about the user. "
-            "Use a keyword to search past conversations, or 'profile' to list "
-            "all known preferences and facts about the user."
-        ),
+        "description": "Search past conversations or list what is known about the user.",
         "parameters": {
             "type": "object",
             "required": [],
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": (
-                        "Keywords to search past conversations, "
-                        "or 'profile' to list all known user info."
-                    ),
+                    "description": "Keywords to search, or 'profile' for all known user info",
                 },
             },
         },
@@ -168,25 +124,18 @@ TIMER_TOOL = {
     "type": "function",
     "function": {
         "name": "set_timer",
-        "description": (
-            "Set a countdown timer. When the time is up the assistant will speak an alert aloud. "
-            "Convert natural language durations to seconds (e.g. '5 minutes' → 300, "
-            "'1 hour 30 minutes' → 5400)."
-        ),
+        "description": "Set a countdown timer (spoken alert when done). Convert durations to seconds.",
         "parameters": {
             "type": "object",
             "required": ["duration_seconds"],
             "properties": {
                 "duration_seconds": {
                     "type": "integer",
-                    "description": "How long to count down, in seconds.",
+                    "description": "Duration in seconds",
                 },
                 "label": {
                     "type": "string",
-                    "description": (
-                        "Short name for this timer, e.g. 'pasta', 'eggs'. "
-                        "Defaults to 'timer'."
-                    ),
+                    "description": "Timer name, e.g. 'pasta'. Defaults to 'timer'.",
                 },
             },
         },
@@ -197,51 +146,14 @@ CANCEL_TIMER_TOOL = {
     "type": "function",
     "function": {
         "name": "cancel_timer",
-        "description": "Cancel an active timer by its label.",
+        "description": "Cancel an active timer by label.",
         "parameters": {
             "type": "object",
             "required": [],
             "properties": {
                 "label": {
                     "type": "string",
-                    "description": "Timer label to cancel. Defaults to 'timer'.",
-                },
-            },
-        },
-    },
-}
-
-LIST_TIMERS_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "list_timers",
-        "description": "List all currently active timers by label.",
-        "parameters": {
-            "type": "object",
-            "required": [],
-            "properties": {},
-        },
-    },
-}
-
-RECIPE_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "find_recipe",
-        "description": (
-            "Search for a recipe by dish name or main ingredient and return the full recipe "
-            "with ingredients and step-by-step instructions, formatted for reading aloud."
-        ),
-        "parameters": {
-            "type": "object",
-            "required": ["query"],
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": (
-                        "Dish name or key ingredient, e.g. 'apple pancakes', 'chicken soup', "
-                        "'beef stew'."
-                    ),
+                    "description": "Timer label. Defaults to 'timer'.",
                 },
             },
         },
@@ -253,8 +165,7 @@ RECIPE_TOOL = {
 ALL_TOOLS = [
     WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL, SHOPPING_LIST_TOOL,
     REMEMBER_TOOL, RECALL_TOOL,
-    TIMER_TOOL, CANCEL_TIMER_TOOL, LIST_TIMERS_TOOL,
-    RECIPE_TOOL,
+    TIMER_TOOL, CANCEL_TIMER_TOOL,
 ]
 
 # Tools whose results go stale immediately (e.g., time changes every minute).
@@ -494,10 +405,8 @@ _TOOL_FUNCTIONS: dict[str, callable] = {
     "get_time": get_time,
     "web_search": web_search,
     "add_to_shopping_list": add_to_shopping_list,
-    "find_recipe": find_recipe,
     "set_timer": set_timer,
     "cancel_timer": cancel_timer,
-    "list_timers": list_timers,
 }
 
 
