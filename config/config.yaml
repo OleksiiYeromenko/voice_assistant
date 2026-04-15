@@ -79,8 +79,10 @@ tools:
     provider: "open-meteo"    # Free, no API key needed
   web_search:
     provider: "duckduckgo"    # Free, no API key needed
-  google_keep:
-    enabled: false            # Requires auth setup — see docs/google_keep.md
+  todoist:
+    # Set TODOIST_API_TOKEN and TODOIST_PROJECT_ID in .env
+    # API token: todoist.com → Settings → Integrations → Developer → API token
+    # Project ID: open the Shopping project in Todoist web, copy the number from the URL
 
 # --- TTS ---
 tts:

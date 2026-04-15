@@ -73,13 +73,26 @@ SHOPPING_LIST_TOOL = {
     "type": "function",
     "function": {
         "name": "add_to_shopping_list",
-        "description": "Add an item to the shopping list.",
+        "description": "Add an item to the Todoist shopping list.",
         "parameters": {
             "type": "object",
             "required": ["item"],
             "properties": {
                 "item": {"type": "string", "description": "Item to add"},
             },
+        },
+    },
+}
+
+GET_SHOPPING_LIST_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_shopping_list",
+        "description": "Show all items currently on the shopping list.",
+        "parameters": {
+            "type": "object",
+            "required": [],
+            "properties": {},
         },
     },
 }
@@ -163,7 +176,8 @@ CANCEL_TIMER_TOOL = {
 
 # All available tool schemas
 ALL_TOOLS = [
-    WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL, SHOPPING_LIST_TOOL,
+    WEATHER_TOOL, WEB_SEARCH_TOOL, TIME_TOOL,
+    SHOPPING_LIST_TOOL, GET_SHOPPING_LIST_TOOL,
     REMEMBER_TOOL, RECALL_TOOL,
     TIMER_TOOL, CANCEL_TIMER_TOOL,
 ]
@@ -335,7 +349,7 @@ def web_search(query: str) -> str:
         return f"Search failed: {e}"
 
 
-# --- Shopping list: simple local file for now, Google Keep later ---
+# --- Shopping list ---
 _SHOPPING_LIST_FILE = "data/shopping_list.txt"
 
 
@@ -383,17 +397,78 @@ def find_recipe(query: str) -> str:
     return f"{header}. {ing_block} {numbered_steps}"
 
 
-def add_to_shopping_list(item: str) -> str:
-    """Add item to local shopping list file."""
+_TODOIST_API = "https://api.todoist.com/api/v1"
+
+
+def _todoist_headers() -> dict:
+    import os
+    token = os.getenv("TODOIST_API_TOKEN", "")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _todoist_project_id() -> str:
+    import os
+    return os.getenv("TODOIST_PROJECT_ID", "")
+
+
+def get_shopping_list() -> str:
+    """Return all open tasks in the Todoist shopping list project."""
+    import os
     from pathlib import Path
+    import httpx
 
-    path = Path(_SHOPPING_LIST_FILE)
-    path.parent.mkdir(exist_ok=True)
-    with open(path, "a") as f:
-        f.write(f"- {item}\n")
+    if not os.getenv("TODOIST_API_TOKEN"):
+        # Fallback: read local file
+        path = Path(_SHOPPING_LIST_FILE)
+        if not path.exists():
+            return "The shopping list is empty."
+        items = [l.strip().lstrip("- ") for l in path.read_text().splitlines() if l.strip()]
+        return ("Shopping list: " + ", ".join(items) + ".") if items else "The shopping list is empty."
 
-    log.info(f"Added to shopping list: {item}")
-    return f"Added '{item}' to shopping list."
+    try:
+        project_id = _todoist_project_id()
+        params = {"project_id": project_id} if project_id else {}
+        r = httpx.get(f"{_TODOIST_API}/tasks", headers=_todoist_headers(), params=params, timeout=8)
+        r.raise_for_status()
+        body = r.json()
+        tasks = body.get("results", body) if isinstance(body, dict) else body
+        if not tasks:
+            return "The shopping list is empty."
+        items = [t["content"] for t in tasks]
+        log.info(f"Fetched {len(items)} items from Todoist")
+        return "Shopping list: " + ", ".join(items) + "."
+    except Exception as e:
+        log.error(f"Todoist fetch failed: {e}")
+        return f"Could not fetch shopping list: {e}"
+
+
+def add_to_shopping_list(item: str) -> str:
+    """Add item to Todoist shopping list, falling back to a local file."""
+    import os
+    from pathlib import Path
+    import httpx
+
+    if not os.getenv("TODOIST_API_TOKEN"):
+        # Fallback: local file
+        path = Path(_SHOPPING_LIST_FILE)
+        path.parent.mkdir(exist_ok=True)
+        with open(path, "a") as f:
+            f.write(f"- {item}\n")
+        log.info(f"Added to local shopping list: {item}")
+        return f"Added '{item}' to shopping list."
+
+    try:
+        project_id = _todoist_project_id()
+        payload: dict = {"content": item}
+        if project_id:
+            payload["project_id"] = project_id
+        r = httpx.post(f"{_TODOIST_API}/tasks", headers=_todoist_headers(), json=payload, timeout=8)
+        r.raise_for_status()
+        log.info(f"Added to Todoist: {item}")
+        return f"Added '{item}' to the shopping list."
+    except Exception as e:
+        log.error(f"Todoist add failed: {e}")
+        return f"Could not add to shopping list: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +479,7 @@ _TOOL_FUNCTIONS: dict[str, callable] = {
     "get_weather": get_weather,
     "get_time": get_time,
     "web_search": web_search,
+    "get_shopping_list": get_shopping_list,
     "add_to_shopping_list": add_to_shopping_list,
     "set_timer": set_timer,
     "cancel_timer": cancel_timer,

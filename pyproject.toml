@@ -39,7 +39,6 @@ cloud = [
     "google-genai>=1.0.0",
 ]
 tools = [
-    "gkeepapi>=0.16.0",      # Google Keep
 ]
 ui = [
     "pyqt6>=6.7",
