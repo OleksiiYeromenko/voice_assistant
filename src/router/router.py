@@ -97,10 +97,9 @@ class ModelRouter:
                             cleaned_text=cleaned if cleaned else text,
                         )
 
-                    # "switch to X" sets sticky session preference
-                    if "switch to" in pattern:
-                        self.session_preference = key
-                        log.info(f"Session preference set → {key}")
+                    # Any explicit backend selection is sticky
+                    self.session_preference = key
+                    log.info(f"Session preference set → {key}")
 
                     return RouteDecision(
                         backend_key=key,
