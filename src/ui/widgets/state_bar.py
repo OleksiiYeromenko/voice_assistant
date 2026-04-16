@@ -76,6 +76,10 @@ class StatePill(QLabel):
             self._anim_mode = "think"
             self._anim_timer.setInterval(_THINKING_INTERVAL_MS)
             self._anim_timer.start()
+        elif state_name == "SPEAKING":
+            self._anim_mode = "listen"   # same bright↔dim pulse, different color
+            self._anim_timer.setInterval(_LISTENING_PULSE_MS)
+            self._anim_timer.start()
 
     def _tick(self):
         self._anim_frame += 1

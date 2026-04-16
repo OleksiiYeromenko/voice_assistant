@@ -146,7 +146,11 @@ def run_llm_with_tools(
 
         # Stream tokens through TTS — speaks complete sentences as they arrive.
         # pre_proc (thinking sound) is passed only on the first round; cleared inside stream_speak.
+        speaking_emitted = False
         for text in tts.stream_speak(token_gen(), latency=latency, pre_proc=thinking_proc if round_num == 0 else None):
+            if not speaking_emitted and text.strip() and ui_bus is not None:
+                ui_bus.state_changed.emit("SPEAKING")
+                speaking_emitted = True
             if not printed_prefix:
                 print("\n🤖 ", end="", flush=True)
                 printed_prefix = True
@@ -225,7 +229,11 @@ def run_streaming_llm(
         latency.llm_ms = t.elapsed_ms
         latency.model_used = backend.name
 
+    speaking_emitted = False
     for text in tts.stream_speak(token_gen(), latency=latency, pre_proc=thinking_proc):
+        if not speaking_emitted and text.strip() and ui_bus is not None:
+            ui_bus.state_changed.emit("SPEAKING")
+            speaking_emitted = True
         full_text += text
         print(text, end="", flush=True)
 
