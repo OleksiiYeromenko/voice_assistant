@@ -335,6 +335,12 @@ class LlamaCppBackend:
             "messages": full_messages,
             "stream": True,
             "temperature": self._temperature,
+            # Disable thinking for qwen3 thinking models.
+            # /no_think suffix only works with Ollama, not llama.cpp.
+            # Per-request API (has known bugs with some builds — most reliable
+            # method is --reasoning-budget 0 at server startup).
+            "chat_template_kwargs": {"enable_thinking": False},
+            "thinking_budget_tokens": 0,
         }
         if self._num_predict is not None:
             payload["max_tokens"] = self._num_predict
