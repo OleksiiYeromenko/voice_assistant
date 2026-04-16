@@ -30,7 +30,7 @@ class UIEventBus(QObject):
     tool_started = pyqtSignal(str)          # tool name
     tool_done = pyqtSignal(str, str)        # tool name, short result (≤80 chars)
 
-    # Latency after each full pipeline pass: stt_ms, ttft_ms, llm_ms, total_ms, model_name
+    # Latency after each full pipeline pass: stt_ms, ttft_ms, llm_ms, token_count, model_name
     metrics_updated = pyqtSignal(float, float, float, float, str)
 
     # System resource snapshot: cpu_percent, ram_used_mb, ram_total_mb, temp_celsius|None

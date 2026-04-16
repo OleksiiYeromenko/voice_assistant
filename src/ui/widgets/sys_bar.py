@@ -77,7 +77,7 @@ class TemperatureLabel(QWidget):
 
 
 class LatencyPanel(QWidget):
-    """Three stacked latency labels: STT / TTFT / Total."""
+    """Three stacked latency labels: STT / TTFT / TPS."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -89,9 +89,9 @@ class LatencyPanel(QWidget):
 
         self._stt = QLabel("STT  —", self)
         self._ttft = QLabel("TTFT —", self)
-        self._total = QLabel("TOT  —", self)
+        self._tps = QLabel("TPS  —", self)
 
-        for lbl in (self._stt, self._ttft, self._total):
+        for lbl in (self._stt, self._ttft, self._tps):
             lbl.setStyleSheet(style)
             layout.addWidget(lbl)
 
@@ -103,10 +103,11 @@ class LatencyPanel(QWidget):
             return f"{ms:.0f}ms"
         return f"{ms / 1000:.1f}s"
 
-    def update_metrics(self, stt_ms: float, ttft_ms: float, total_ms: float, model: str):
+    def update_metrics(self, stt_ms: float, ttft_ms: float, llm_ms: float, token_count: float, model: str):
         self._stt.setText(f"STT  {self._fmt(stt_ms)}")
         self._ttft.setText(f"TTFT {self._fmt(ttft_ms)}")
-        self._total.setText(f"TOT  {self._fmt(total_ms)}")
+        tps_str = f"{token_count / (llm_ms / 1000):.1f}" if llm_ms > 0 and token_count > 0 else "—"
+        self._tps.setText(f"TPS  {tps_str}")
 
 
 class SysBar(QWidget):
@@ -155,5 +156,5 @@ class SysBar(QWidget):
 
         self._temp.update_temp(temp)
 
-    def _on_metrics_updated(self, stt_ms: float, ttft_ms: float, llm_ms: float, total_ms: float, model: str):
-        self._latency.update_metrics(stt_ms, ttft_ms, total_ms, model)
+    def _on_metrics_updated(self, stt_ms: float, ttft_ms: float, llm_ms: float, token_count: float, model: str):
+        self._latency.update_metrics(stt_ms, ttft_ms, llm_ms, token_count, model)

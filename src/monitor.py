@@ -20,6 +20,7 @@ class LatencyRecord:
     tts_first_chunk_ms: float = 0.0
     total_ms: float = 0.0
     model_used: str = ""
+    token_count: int = 0
 
     @staticmethod
     def _fmt(ms: float) -> str:

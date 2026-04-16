@@ -1,21 +1,20 @@
-"""Main chat area: user speech label + inline tool status + scrolling LLM response view."""
+"""Main chat area: user speech label + unified conversation log (tool events + LLM response)."""
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QTextCursor
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import QFrame, QLabel, QTextEdit, QVBoxLayout, QWidget
 
 from src.ui import theme
 
-_SPINNER_FRAMES = (".", "..", "...")
-_SPINNER_INTERVAL_MS = 450
-_TOOL_HIDE_MS = 3000
+_TOOL_RUNNING_COLOR = "#90CAF9"   # blue — executing
+_TOOL_DONE_COLOR    = "#69F0AE"   # green — complete
+_RESPONSE_COLOR     = theme.TEXT_PRIMARY
+_TOOL_FONT_SIZE     = 16
+_RESPONSE_FONT_SIZE = 28
 
 
 class UserSpeechLabel(QLabel):
-    """Displays the last transcribed user input.
-
-    Fixed height, italic, cleared at the start of each new turn.
-    """
+    """Displays the last transcribed user input. Fixed height, italic."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,7 +29,6 @@ class UserSpeechLabel(QLabel):
         self.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-style: italic; font-size: 24px;")
 
     def set_text(self, text: str):
-        # Render "You: <text>" with accent prefix
         self.setText(f"You: {text}")
         self.setStyleSheet(
             f"color: {theme.TEXT_PRIMARY}; font-style: italic; font-size: 24px;"
@@ -40,97 +38,107 @@ class UserSpeechLabel(QLabel):
         self._set_placeholder()
 
 
-class ResponseView(QTextEdit):
-    """Scrolling LLM response area — tokens appended one by one.
+class ConversationLog(QTextEdit):
+    """Unified scrolling log: persistent tool blocks + streaming LLM response.
 
-    Cleared at the start of each new LISTENING cycle so only the
-    current turn's response is displayed.
+    Tool blocks appear above the response text and are updated in-place
+    (running → done) without disappearing. Each tool call gets its own line.
+    Cleared at the start of each new LISTENING cycle.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
-        self.setFont(QFont("DejaVu Sans", 30))
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.document().setDocumentMargin(12)
+        # Per-tool saved cursors (selecting the tool line text for in-place update)
+        self._tool_cursors: dict[str, QTextCursor] = {}
+        self._has_tool_content = False
+        self._response_started = False
 
-    def append_token(self, token: str):
-        """Append a single LLM token and scroll to bottom."""
+    # ── Tool events ───────────────────────────────────────────────────────────
+
+    def append_tool_start(self, name: str):
+        """Insert a blue 'running' line for this tool and save a cursor to it."""
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(token)
+
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(_TOOL_RUNNING_COLOR))
+        fmt.setFont(QFont("DejaVu Sans Mono", _TOOL_FONT_SIZE))
+
+        cursor.insertText(f"⚙ {name}  ·  running…\n", fmt)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
 
-    def clear_response(self):
+        # Save a cursor that selects the line we just inserted (excluding trailing \n)
+        saved = QTextCursor(self.document())
+        saved.movePosition(QTextCursor.MoveOperation.End)
+        saved.movePosition(QTextCursor.MoveOperation.PreviousBlock)
+        saved.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+        saved.movePosition(
+            QTextCursor.MoveOperation.EndOfBlock,
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        self._tool_cursors[name] = saved
+        self._has_tool_content = True
+
+    def update_tool_done(self, name: str, result: str):
+        """Replace the running line for this tool with the green done line."""
+        saved = self._tool_cursors.pop(name, None)
+        if saved is None:
+            return
+
+        short = result[:70] + "…" if len(result) > 70 else result
+        new_text = f"⚙ {name}  ·  {short}" if short else f"⚙ {name}  ·  done"
+
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(_TOOL_DONE_COLOR))
+        fmt.setFont(QFont("DejaVu Sans Mono", _TOOL_FONT_SIZE))
+
+        saved.removeSelectedText()
+        saved.insertText(new_text, fmt)
+        self.ensureCursorVisible()
+
+    # ── LLM response streaming ────────────────────────────────────────────────
+
+    def append_token(self, token: str):
+        """Append one LLM token. Inserts a blank separator line after tool blocks."""
+        if self._has_tool_content and not self._response_started:
+            self._response_started = True
+            cursor = self.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            sep_fmt = QTextCharFormat()
+            sep_fmt.setForeground(QColor(theme.BG_SURFACE))
+            cursor.insertText("\n", sep_fmt)
+            self.setTextCursor(cursor)
+
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(_RESPONSE_COLOR))
+        fmt.setFont(QFont("DejaVu Sans", _RESPONSE_FONT_SIZE))
+
+        cursor.insertText(token, fmt)
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def clear_log(self):
         self.clear()
-
-
-class ToolLabel(QLabel):
-    """Inline tool status shown between user question and LLM response.
-
-    Animates while EXECUTING; turns green on DONE and auto-hides after 3s.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(32)
-        self.setContentsMargins(12, 4, 12, 4)
-        self.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-family: 'DejaVu Sans Mono'; font-size: 17px;"
-            f"background-color: {theme.BG_ELEVATED};"
-        )
-
-        self._spinner_frame = 0
-        self._tool_name = ""
-
-        self._spinner_timer = QTimer(self)
-        self._spinner_timer.setInterval(_SPINNER_INTERVAL_MS)
-        self._spinner_timer.timeout.connect(self._tick)
-
-        self._hide_timer = QTimer(self)
-        self._hide_timer.setSingleShot(True)
-        self._hide_timer.setInterval(_TOOL_HIDE_MS)
-        self._hide_timer.timeout.connect(self.hide)
-
-        self.hide()
-
-    def on_tool_started(self, tool_name: str):
-        self._hide_timer.stop()
-        self._tool_name = tool_name
-        self._spinner_frame = 0
-        self._spinner_timer.start()
-        self.setStyleSheet(
-            f"color: #90CAF9; font-family: 'DejaVu Sans Mono'; font-size: 17px;"
-            f"background-color: {theme.BG_ELEVATED};"
-        )
-        self.setText(f"⚙  {tool_name}  ·  EXECUTING.")
-        self.show()
-
-    def on_tool_done(self, tool_name: str, result: str):
-        self._spinner_timer.stop()
-        short = result[:50] + "…" if len(result) > 50 else result
-        label = f"⚙  {tool_name}  ·  DONE" + (f"  {short}" if short else "")
-        self.setText(label)
-        self.setStyleSheet(
-            f"color: #69F0AE; font-family: 'DejaVu Sans Mono'; font-size: 17px;"
-            f"background-color: {theme.BG_ELEVATED};"
-        )
-        self._hide_timer.start()
-
-    def _tick(self):
-        self._spinner_frame = (self._spinner_frame + 1) % len(_SPINNER_FRAMES)
-        dots = _SPINNER_FRAMES[self._spinner_frame]
-        self.setText(f"⚙  {self._tool_name}  ·  EXECUTING{dots}")
+        self._tool_cursors.clear()
+        self._has_tool_content = False
+        self._response_started = False
 
 
 class ChatView(QWidget):
     """Main content area:
-        - UserSpeechLabel (fixed 60px)
-        - ToolLabel (inline tool status, hidden when idle)
+        - UserSpeechLabel (fixed 68px)
         - Thin horizontal separator
-        - ResponseView (stretches to fill)
+        - ConversationLog (stretches to fill) — shows tool events + LLM response
     """
 
     def __init__(self, bus, parent=None):
@@ -141,36 +149,31 @@ class ChatView(QWidget):
         layout.setSpacing(0)
 
         self._user_label = UserSpeechLabel(self)
-        self._tool_label = ToolLabel(self)
 
-        # Separator line
         sep = QFrame(self)
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFixedHeight(1)
         sep.setStyleSheet("background-color: #2A2A45; border: none;")
 
-        self._response = ResponseView(self)
+        self._log = ConversationLog(self)
 
         layout.addWidget(self._user_label)
-        layout.addWidget(self._tool_label)
         layout.addWidget(sep)
-        layout.addWidget(self._response, stretch=1)
+        layout.addWidget(self._log, stretch=1)
 
         self._connect_signals(bus)
 
     def _connect_signals(self, bus):
         bus.user_said.connect(self._on_user_said)
-        bus.text_chunk.connect(self._response.append_token)
+        bus.text_chunk.connect(self._log.append_token)
         bus.state_changed.connect(self._on_state_changed)
-        bus.tool_started.connect(self._tool_label.on_tool_started)
-        bus.tool_done.connect(self._tool_label.on_tool_done)
+        bus.tool_started.connect(self._log.append_tool_start)
+        bus.tool_done.connect(self._log.update_tool_done)
 
     def _on_user_said(self, text: str):
         self._user_label.set_text(text)
 
     def _on_state_changed(self, state_name: str):
-        # Clear response area when starting a new listening phase
         if state_name == "LISTENING":
-            self._response.clear_response()
+            self._log.clear_log()
             self._user_label.clear_speech()
-            self._tool_label.hide()

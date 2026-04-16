@@ -18,7 +18,7 @@ class IdleScreen(QWidget):
       │         Tuesday, 4 March            │  ← 28px date
       │                                     │  ↓ flex spacer
       ├─────────────────────────────────────┤
-      │  ● IDLE              47°C  CPU 12%  │  ← 40px bottom strip
+      │  ● IDLE    47°C  CPU 12%  3.6GB RAM │  ← 40px bottom strip
       └─────────────────────────────────────┘
     """
 
@@ -83,10 +83,20 @@ class IdleScreen(QWidget):
             f"font-family: 'DejaVu Sans Mono';"
         )
 
+        self._ram_label = QLabel("", self)
+        self._ram_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._ram_label.setStyleSheet(
+            f"color: {theme.TEXT_MUTED}; font-size: 18px;"
+            f"font-family: 'DejaVu Sans Mono';"
+        )
+
         bottom_layout.addWidget(self._state_label)
         bottom_layout.addStretch()
         bottom_layout.addWidget(self._temp_label)
         bottom_layout.addWidget(self._cpu_label)
+        bottom_layout.addWidget(self._ram_label)
 
         outer.addWidget(center, stretch=1)
         outer.addWidget(bottom)
@@ -100,8 +110,14 @@ class IdleScreen(QWidget):
 
     # ── Public slots ─────────────────────────────────────────────────────────
 
-    def update_resources(self, cpu_pct: float, temp: float | None):
-        """Update the bottom strip with current CPU and temperature."""
+    def update_resources(
+        self,
+        cpu_pct: float,
+        ram_used_mb: float,
+        ram_total_mb: float,
+        temp: float | None,
+    ):
+        """Update the bottom strip with current CPU, RAM, and temperature."""
         if temp is not None:
             color = theme.temp_color(temp)
             self._temp_label.setText(f"{temp:.0f}°C")
@@ -114,6 +130,14 @@ class IdleScreen(QWidget):
         self._cpu_label.setText(f"CPU {cpu_pct:.0f}%")
         self._cpu_label.setStyleSheet(
             f"color: {cpu_color}; font-size: 18px;"
+            f"font-family: 'DejaVu Sans Mono';"
+        )
+
+        ram_pct = (ram_used_mb / ram_total_mb * 100) if ram_total_mb > 0 else 0
+        ram_color = theme.cpu_color(ram_pct)
+        self._ram_label.setText(f"{ram_used_mb / 1024:.1f}GB RAM")
+        self._ram_label.setStyleSheet(
+            f"color: {ram_color}; font-size: 18px;"
             f"font-family: 'DejaVu Sans Mono';"
         )
 

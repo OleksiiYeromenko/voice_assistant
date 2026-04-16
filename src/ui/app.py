@@ -147,7 +147,7 @@ class MainWindow(QMainWindow):
         ram_total: float,
         temp: object,
     ):
-        self._idle_screen.update_resources(cpu_pct, temp)
+        self._idle_screen.update_resources(cpu_pct, ram_used, ram_total, temp)
 
     def _poll_resources(self):
         try:

@@ -299,7 +299,7 @@ class AssistantFSM:
                 latency.stt_ms,
                 latency.llm_first_token_ms,
                 latency.llm_ms,
-                latency.total_ms,
+                float(latency.token_count),
                 latency.model_used,
             )
 

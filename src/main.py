@@ -134,6 +134,7 @@ def run_llm_with_tools(
                             first_token_seen = True
                             if round_num == 0:
                                 latency.llm_first_token_ms = t.mark()
+                        latency.token_count += 1
                         if ui_bus is not None:
                             ui_bus.text_chunk.emit(chunk.text)
                         yield chunk.text
@@ -217,6 +218,7 @@ def run_streaming_llm(
                     latency.llm_first_token_ms = t.mark()
                     first_token = False
                 if chunk.text:
+                    latency.token_count += 1
                     if ui_bus is not None:
                         ui_bus.text_chunk.emit(chunk.text)
                     yield chunk.text
