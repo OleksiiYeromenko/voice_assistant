@@ -129,7 +129,18 @@ class AssistantFSM:
 
         else:  # WAKE_WORD
             try:
-                next(self._wake_gen)  # blocks until detection; mic released on return
+                from src.main import _maybe_end_session
+                while True:
+                    val = next(self._wake_gen)
+                    if val is None:  # heartbeat — check for session expiry while idle
+                        new_sid = _maybe_end_session(
+                            self.conversation, self.memory, self.backends,
+                            self.cfg, self.last_interaction_time, self.session_id,
+                        )
+                        if new_sid is not None:
+                            self.session_id = new_sid
+                    else:
+                        break  # wake word detected; mic released
                 proc = self.tts.play_greeting()
                 if proc is not None:
                     proc.wait()  # wait for greeting to finish before recording

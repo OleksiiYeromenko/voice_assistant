@@ -119,20 +119,31 @@ class WakeWordDetector:
         finally:
             _kill_proc(proc)
 
-    def listen(self) -> Generator[float, None, None]:
+    def listen(self, heartbeat_s: float = 30.0) -> Generator[float | None, None, None]:
         """Block and yield confidence score each time wake word is detected.
+
+        Yields ``None`` every *heartbeat_s* seconds so the caller can perform
+        periodic maintenance (e.g. session rotation) without blocking indefinitely.
+        The arecord process keeps running across heartbeat yields — the mic device
+        is only released when a real wake word fires (non-None yield).
 
         Usage::
 
             detector = WakeWordDetector()
-            for confidence in detector.listen():
-                print(f"Wake word detected! ({confidence:.2f})")
+            for val in detector.listen():
+                if val is None:
+                    continue  # heartbeat — do maintenance if needed
+                print(f"Wake word detected! ({val:.2f})")
                 # ALSA device is free here — safe to record with STT
                 audio = stt.record_utterance()
                 ...
         """
+        import time
+
         self._ensure_alsa_device()
         log.info(f"Listening for wake word at {RATE} Hz via {self._alsa_device} ...")
+
+        last_heartbeat = time.monotonic()
 
         try:
             while True:
@@ -152,7 +163,8 @@ class WakeWordDetector:
                 )
 
                 try:
-                    while True:
+                    detected = False
+                    while not detected:
                         data = proc.stdout.read(CHUNK_BYTES)
                         if not data or len(data) < CHUNK_BYTES:
                             log.warning("arecord stream ended unexpectedly")
@@ -168,14 +180,14 @@ class WakeWordDetector:
                                 _kill_proc(proc)
                                 self.oww.reset()
                                 yield score
-                                # After yield returns, break inner loop
-                                # to reopen arecord at the top of outer loop
+                                detected = True
                                 break
-                        else:
-                            # No wake word this chunk — keep reading
-                            continue
-                        # Wake word fired (inner for-loop hit break) — exit inner while
-                        break
+
+                        if not detected and heartbeat_s > 0:
+                            now = time.monotonic()
+                            if (now - last_heartbeat) >= heartbeat_s:
+                                last_heartbeat = now
+                                yield None  # proc still running; resumes here on next()
                 finally:
                     _kill_proc(proc)
 
