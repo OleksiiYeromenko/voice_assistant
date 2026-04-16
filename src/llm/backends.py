@@ -316,6 +316,53 @@ class LlamaCppBackend:
     def name(self) -> str:
         return f"{self._label}/{self._model}" if self._model else self._label
 
+    def _normalize_messages(self, messages: list[dict]) -> list[dict]:
+        """Convert internal Ollama-style message format to strict OpenAI format.
+
+        - tool_calls entries get id, type="function", arguments as JSON string
+        - tool result messages get tool_call_id instead of tool_name
+        """
+        normalized: list[dict] = []
+        # (name, id) pairs from the most recent assistant tool_calls block
+        pending: list[tuple[str, str]] = []
+
+        for msg in messages:
+            if msg["role"] == "assistant" and msg.get("tool_calls"):
+                pending = []
+                new_tcs = []
+                for i, tc in enumerate(msg["tool_calls"]):
+                    fn = tc.get("function", tc)
+                    name = fn["name"]
+                    args = fn.get("arguments", {})
+                    call_id = tc.get("id") or f"call_{name}_{i}"
+                    new_tcs.append({
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": json.dumps(args) if isinstance(args, dict) else args,
+                        },
+                    })
+                    pending.append((name, call_id))
+                normalized.append({**msg, "tool_calls": new_tcs})
+            elif msg["role"] == "tool":
+                tool_name = msg.get("tool_name", "")
+                call_id = f"call_{tool_name}_0"
+                for i, (name, cid) in enumerate(pending):
+                    if name == tool_name:
+                        call_id = cid
+                        pending.pop(i)
+                        break
+                normalized.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": str(msg.get("content", "")),
+                })
+            else:
+                normalized.append(msg)
+
+        return normalized
+
     def stream(
         self,
         messages: list[dict],
@@ -328,7 +375,7 @@ class LlamaCppBackend:
         full_messages: list[dict] = []
         if sys_prompt:
             full_messages.append({"role": "system", "content": sys_prompt})
-        full_messages.extend(messages)
+        full_messages.extend(self._normalize_messages(messages))
 
         payload: dict[str, Any] = {
             "model": self._model,
