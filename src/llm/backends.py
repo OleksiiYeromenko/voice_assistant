@@ -61,6 +61,15 @@ def check_ollama_connectivity(base_url: str, timeout: float = 3.0) -> bool:
         return False
 
 
+def check_llama_cpp_connectivity(base_url: str, timeout: float = 3.0) -> bool:
+    """Returns True if llama.cpp server /health endpoint is reachable."""
+    try:
+        with urllib.request.urlopen(f"{base_url}/health", timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Ollama (local)
 # ---------------------------------------------------------------------------
@@ -272,6 +281,125 @@ class OllamaBackend:
         except Exception as e:
             log.error(f"Ollama stream error: {e}")
             raise  # Let state_machine handle fallback silently; don't pollute TTS with error text
+
+
+# ---------------------------------------------------------------------------
+# llama.cpp server (local RPi)
+# ---------------------------------------------------------------------------
+class LlamaCppBackend:
+    """llama.cpp server via its OpenAI-compatible /v1/chat/completions API.
+
+    No warm-up or keep-alive needed — the model is always loaded when the
+    server is running.  Tool calling uses the standard OpenAI streaming
+    format (arguments are streamed per-character and accumulated here).
+    """
+
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8080",
+        model: str = "",
+        temperature: float = 0.7,
+        num_predict: int | None = 500,
+        system_prompt: str = "",
+        label: str = "local",
+    ):
+        import httpx
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._temperature = temperature
+        self._num_predict = num_predict
+        self._system_prompt = system_prompt
+        self._label = label
+        self._timeout = httpx.Timeout(connect=3.0, read=300.0, write=30.0, pool=10.0)
+
+    @property
+    def name(self) -> str:
+        return f"{self._label}/{self._model}" if self._model else self._label
+
+    def stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        system: str | None = None,
+    ) -> Generator[LLMChunk, None, None]:
+        import httpx
+
+        sys_prompt = system or self._system_prompt
+        full_messages: list[dict] = []
+        if sys_prompt:
+            full_messages.append({"role": "system", "content": sys_prompt})
+        full_messages.extend(messages)
+
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": full_messages,
+            "stream": True,
+            "temperature": self._temperature,
+        }
+        if self._num_predict is not None:
+            payload["max_tokens"] = self._num_predict
+        if tools:
+            payload["tools"] = tools
+
+        # index → {name, args_str} — accumulate streamed tool-call fragments
+        tool_acc: dict[int, dict] = {}
+
+        try:
+            with httpx.Client(timeout=self._timeout) as client:
+                with client.stream(
+                    "POST",
+                    f"{self._base_url}/v1/chat/completions",
+                    json=payload,
+                ) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+
+                        choices = chunk.get("choices", [])
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {})
+                        finish_reason = choices[0].get("finish_reason")
+
+                        # Text tokens — emit immediately
+                        content = delta.get("content")
+                        if content:
+                            yield LLMChunk(text=content, model=self.name)
+
+                        # Tool-call argument fragments — accumulate across chunks
+                        for tcd in delta.get("tool_calls", []):
+                            idx = tcd["index"]
+                            if idx not in tool_acc:
+                                tool_acc[idx] = {"name": "", "args_str": ""}
+                            fn = tcd.get("function", {})
+                            if fn.get("name"):
+                                tool_acc[idx]["name"] += fn["name"]
+                            tool_acc[idx]["args_str"] += fn.get("arguments", "")
+
+                        # Flush complete tool calls when server signals finish
+                        if finish_reason == "tool_calls" and tool_acc:
+                            calls: list[ToolCall] = []
+                            for acc in (tool_acc[i] for i in sorted(tool_acc)):
+                                try:
+                                    args = json.loads(acc["args_str"]) if acc["args_str"] else {}
+                                except json.JSONDecodeError:
+                                    args = {}
+                                calls.append(ToolCall(name=acc["name"], arguments=args))
+                            yield LLMChunk(tool_calls=calls, model=self.name)
+                            tool_acc = {}
+
+            yield LLMChunk(done=True, model=self.name)
+        except Exception as e:
+            log.error(f"LlamaCpp stream error: {e}")
+            raise
 
 
 # ---------------------------------------------------------------------------

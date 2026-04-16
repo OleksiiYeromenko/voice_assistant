@@ -15,7 +15,8 @@ from src.monitor import LatencyRecord, Timer, snapshot
 from src.stt.engine import STTEngine
 from src.tts.engine import TTSEngine
 from src.llm.backends import (
-    OllamaBackend, ClaudeBackend, GeminiBackend, ToolCall, check_ollama_connectivity
+    OllamaBackend, LlamaCppBackend, ClaudeBackend, GeminiBackend,
+    ToolCall, check_ollama_connectivity,
 )
 from src.router.router import ModelRouter, RemoteAvailabilityMonitor
 from src.tools.executor import ALL_TOOLS, execute_tool, register_tool
@@ -54,15 +55,12 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
         label="remote",
     )
 
-    # Local backend (localhost RPi Ollama — always-available fallback)
-    backends["local"] = OllamaBackend(
-        model=model_cfg["model"],
+    # Local backend (RPi llama.cpp server — always-available fallback)
+    backends["local"] = LlamaCppBackend(
         base_url=local_url,
+        model=model_cfg.get("model", ""),
         temperature=model_cfg["temperature"],
-        num_ctx=model_cfg["num_ctx"],
         num_predict=model_cfg.get("num_predict"),
-        num_thread=model_cfg.get("num_thread"),
-        think=model_cfg.get("think", False),
         label="local",
     )
 

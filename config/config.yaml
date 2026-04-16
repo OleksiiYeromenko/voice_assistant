@@ -23,20 +23,18 @@ stt:
 
 # --- LLM ---
 llm:
-  remote_base_url: "http://192.168.1.74:11434"  # GPU PC (primary — tried first at startup)
-  local_base_url: "http://localhost:11434"        # RPi Ollama (fallback if GPU PC unreachable)
-  # Optional Ollama server-side env vars for Raspberry Pi performance:
-  #   OLLAMA_KEEP_ALIVE=-1           # Keep model in RAM forever (set in systemd service)
-  #   OLLAMA_FLASH_ATTENTION=1       # Lower memory as context grows
-  #   OLLAMA_KV_CACHE_TYPE=q8_0      # Half the KV cache memory vs f16
+  remote_base_url: "http://192.168.1.74:11434"  # GPU PC — Ollama (primary, tried first at startup)
+  local_base_url: "http://localhost:8080"        # RPi — llama.cpp server (fallback if GPU PC unreachable)
+  # llama.cpp server startup example:
+  #   llama-server -m /path/to/model.gguf --port 8080 --ctx-size 2048 -np 1 -t 4
 
   # Fast local model — default for everyday queries
   local:
-    model: "gemma4:e2b"
+    model: "gemma4-e2b-q4km"   # Informational; echoed in backend.name (llama.cpp ignores it)
     temperature: 0.7
-    num_ctx: 2048
+    num_ctx: 2048              # Set at llama-server startup (--ctx-size), kept for reference
     num_predict: 500           # Max tokens per response — caps generation time on slow CPU
-    num_thread: 4              # Optimal for RPi 5 (4 cores); avoids ARM64 thread misdetection
+    # num_thread: set at llama-server startup (-t flag), not passed via API
     think: false
     # System prompt is loaded from memory/PERSONA.md (human-editable, git-tracked)
 
