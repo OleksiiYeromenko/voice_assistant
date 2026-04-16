@@ -40,7 +40,7 @@ WEB_SEARCH_TOOL = {
     "type": "function",
     "function": {
         "name": "web_search",
-        "description": "Search the web for current information.",
+        "description": "Search the web for recent events, news, or rapidly-changing information. Do NOT use for general knowledge or facts that do not change.",
         "parameters": {
             "type": "object",
             "required": ["query"],

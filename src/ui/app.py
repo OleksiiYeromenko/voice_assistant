@@ -38,7 +38,7 @@ def _wake_screen():
     try:
         subprocess.run(
             ["xset", "-display", ":0", "dpms", "force", "on"],
-            check=False, timeout=1,
+            check=False, timeout=1, capture_output=True,
         )
     except Exception:
         pass  # xset not available or display already on — ignore

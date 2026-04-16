@@ -216,15 +216,16 @@ class AssistantFSM:
         latency.router_ms = route_timer.elapsed_ms
 
         backend = self.router.get_backend(decision.backend_key)
+        actual_key = next((k for k, v in self.router.backends.items() if v is backend), decision.backend_key)
         log.info(f"Router: {decision.reason} → {backend.name}")
 
         if self.ui_bus is not None:
-            self.ui_bus.model_changed.emit(decision.backend_key, backend.name)
+            self.ui_bus.model_changed.emit(actual_key, backend.name)
 
         if not isinstance(backend, (OllamaBackend, LlamaCppBackend)):
-            print(f"  [Using {decision.backend_key}]")
-        elif decision.backend_key != self.router.default_backend_key:
-            print(f"  [Using {decision.backend_key}]")
+            print(f"  [Using {actual_key}]")
+        elif actual_key != self.router.default_backend_key:
+            print(f"  [Using {actual_key}]")
 
         # Build messages with memory context
         self.conversation.append({"role": "user", "content": decision.cleaned_text})

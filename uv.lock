@@ -1834,6 +1834,7 @@ source = { editable = "." }
 dependencies = [
     { name = "ddgs" },
     { name = "faster-whisper" },
+    { name = "google-genai" },
     { name = "httpx" },
     { name = "ollama" },
     { name = "onnxruntime" },
@@ -1872,6 +1873,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'cloud'", specifier = ">=0.40.0" },
     { name = "ddgs", specifier = ">=9.0.0" },
     { name = "faster-whisper", specifier = ">=1.1.0" },
+    { name = "google-genai", specifier = ">=1.64.0" },
     { name = "google-genai", marker = "extra == 'cloud'", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "ollama", specifier = ">=0.4.0" },
