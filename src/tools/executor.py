@@ -273,7 +273,7 @@ def get_weather(city: str, forecast_days: int = 0) -> str:
 
     except Exception as e:
         log.error(f"Weather error: {e}")
-        return f"Weather lookup failed: {e}"
+        return f"ERROR: Weather lookup failed: {e}. Tell the user the lookup failed; do not invent data."
 
 
 def get_time(location: str = "") -> str:
@@ -316,7 +316,7 @@ def get_time(location: str = "") -> str:
         return now.strftime(f"{city_name} ({tz_name}): %A, %B %d, %Y — %H:%M")
     except Exception as e:
         log.error(f"Time lookup error: {e}")
-        return f"Time lookup failed: {e}"
+        return f"ERROR: Time lookup failed: {e}. Tell the user the lookup failed; do not invent data."
 
 
 def web_search(query: str) -> str:
@@ -346,11 +346,7 @@ def web_search(query: str) -> str:
         return "\n".join(summaries)
     except Exception as e:
         log.error(f"Search error: {e}")
-        return f"Search failed: {e}"
-
-
-# --- Shopping list ---
-_SHOPPING_LIST_FILE = "data/shopping_list.txt"
+        return f"ERROR: Web search failed: {e}. Tell the user the search failed; do not invent results."
 
 
 def find_recipe(query: str) -> str:
@@ -414,16 +410,10 @@ def _todoist_project_id() -> str:
 def get_shopping_list() -> str:
     """Return all open tasks in the Todoist shopping list project."""
     import os
-    from pathlib import Path
     import httpx
 
     if not os.getenv("TODOIST_API_TOKEN"):
-        # Fallback: read local file
-        path = Path(_SHOPPING_LIST_FILE)
-        if not path.exists():
-            return "The shopping list is empty."
-        items = [l.strip().lstrip("- ") for l in path.read_text().splitlines() if l.strip()]
-        return ("Shopping list: " + ", ".join(items) + ".") if items else "The shopping list is empty."
+        return "ERROR: TODOIST_API_TOKEN is not configured. Tell the user the shopping list is unavailable until Todoist is set up."
 
     try:
         project_id = _todoist_project_id()
@@ -439,36 +429,40 @@ def get_shopping_list() -> str:
         return "Shopping list: " + ", ".join(items) + "."
     except Exception as e:
         log.error(f"Todoist fetch failed: {e}")
-        return f"Could not fetch shopping list: {e}"
+        return f"ERROR: Could not fetch shopping list: {e}. Tell the user the fetch failed; do not invent items."
 
 
 def add_to_shopping_list(item: str) -> str:
-    """Add item to Todoist shopping list, falling back to a local file."""
+    """Add item to Todoist shopping list, with one retry on transient failure."""
     import os
-    from pathlib import Path
     import httpx
 
     if not os.getenv("TODOIST_API_TOKEN"):
-        # Fallback: local file
-        path = Path(_SHOPPING_LIST_FILE)
-        path.parent.mkdir(exist_ok=True)
-        with open(path, "a") as f:
-            f.write(f"- {item}\n")
-        log.info(f"Added to local shopping list: {item}")
-        return f"Added '{item}' to shopping list."
+        return "ERROR: TODOIST_API_TOKEN is not configured. Tell the user the shopping list is unavailable until Todoist is set up."
 
-    try:
-        project_id = _todoist_project_id()
-        payload: dict = {"content": item}
-        if project_id:
-            payload["project_id"] = project_id
-        r = httpx.post(f"{_TODOIST_API}/tasks", headers=_todoist_headers(), json=payload, timeout=8)
-        r.raise_for_status()
-        log.info(f"Added to Todoist: {item}")
-        return f"Added '{item}' to the shopping list."
-    except Exception as e:
-        log.error(f"Todoist add failed: {e}")
-        return f"Could not add to shopping list: {e}"
+    project_id = _todoist_project_id()
+    payload: dict = {"content": item}
+    if project_id:
+        payload["project_id"] = project_id
+
+    last_err: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            r = httpx.post(
+                f"{_TODOIST_API}/tasks",
+                headers=_todoist_headers(),
+                json=payload,
+                timeout=3,
+            )
+            r.raise_for_status()
+            log.info(f"Added to Todoist: {item}")
+            return f"Added '{item}' to the shopping list."
+        except Exception as e:
+            last_err = e
+            log.warning(f"Todoist add attempt {attempt} failed: {e}")
+
+    log.error(f"Todoist add failed after retry: {last_err}")
+    return f"ERROR: Could not add '{item}' to shopping list: {last_err}. Tell the user the item was NOT saved."
 
 
 # ---------------------------------------------------------------------------

@@ -89,7 +89,7 @@ Cloud → local fallback happens automatically on network failure.
 |---|---|---|
 | Weather | ✅ Working | Open-Meteo (free) |
 | Web Search | ✅ Working | DuckDuckGo |
-| Shopping List | ✅ Local file | `data/shopping_list.txt` |
+| Shopping List | ✅ Working | Todoist API |
 | Google Keep | 🔲 Planned | gkeepapi |
 | Smart Home | 🔲 Planned | n8n webhooks |
 
