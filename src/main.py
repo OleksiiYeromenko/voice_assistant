@@ -8,6 +8,8 @@ called by the FSM state handlers.
 import logging
 import sys
 import time
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from src.config import load_config
 from src.memory import MarkdownMemoryStore
@@ -461,12 +463,40 @@ def assistant_loop(cfg: dict):
         fsm.run()
 
 
-def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        datefmt="%H:%M:%S",
+def _setup_logging():
+    log_dir = Path(__file__).resolve().parent.parent / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    fmt = logging.Formatter(
+        "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    # Console handler — short timestamps for journald / interactive use
+    console = logging.StreamHandler()
+    console.setFormatter(logging.Formatter(
+        "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+
+    # Rotating file handler — 5 MB × 5 files = ~25 MB cap, survives reboots
+    file_handler = RotatingFileHandler(
+        log_dir / "assistant.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(fmt)
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.handlers.clear()
+    root.addHandler(console)
+    root.addHandler(file_handler)
+
+
+def main():
+    _setup_logging()
 
     cfg = load_config()
     assistant_loop(cfg)
