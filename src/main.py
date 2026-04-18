@@ -194,6 +194,45 @@ def run_llm_with_tools(
         full_response = text_buffer.strip()
         break
 
+    # Model exhausted tool rounds without producing a final answer.
+    # Force one text-only call so the user always hears a response.
+    if not full_response and tools_used:
+        log.warning(
+            f"LLM used {MAX_TOOL_ROUNDS} tool rounds without producing text; "
+            "forcing final response without tools."
+        )
+        text_buffer = ""
+        printed_prefix = False
+
+        def final_token_gen():
+            with Timer() as t:
+                for chunk in backend.stream(messages, tools=None, system=system):
+                    if chunk.text:
+                        latency.token_count += 1
+                        if ui_bus is not None:
+                            ui_bus.text_chunk.emit(chunk.text)
+                        yield chunk.text
+                    if chunk.thinking:
+                        log.debug(f"[think] {chunk.thinking}")
+            latency.llm_ms += t.elapsed_ms
+
+        speaking_emitted = False
+        for text in tts.stream_speak(final_token_gen(), latency=latency):
+            if not speaking_emitted and text.strip() and ui_bus is not None:
+                ui_bus.state_changed.emit("SPEAKING")
+                speaking_emitted = True
+            if not printed_prefix:
+                print("\n🤖 ", end="", flush=True)
+                printed_prefix = True
+            text_buffer += text
+            print(text, end="", flush=True)
+
+        if text_buffer.strip():
+            print()
+            if ui_bus is not None:
+                ui_bus.response_complete.emit()
+        full_response = text_buffer.strip()
+
     return full_response, tools_used
 
 
