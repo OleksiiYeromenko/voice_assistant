@@ -11,6 +11,7 @@ so no manual locking is required.
 import logging
 import subprocess
 import sys
+from pathlib import Path
 
 from PyQt6.QtCore import QThread, QTimer, Qt
 from PyQt6.QtWidgets import (
@@ -31,6 +32,59 @@ from src.ui.widgets.sys_bar import SysBar
 log = logging.getLogger(__name__)
 
 _RESOURCE_POLL_INTERVAL_MS = 5_000
+_IDLE_SWITCH_DELAY_MS = 20_000   # stay on active screen 20s after returning to IDLE
+_BACKLIGHT_ROOT = Path("/sys/class/backlight")
+
+_IDLE_STATES = {"IDLE", "SESSION_CHECK"}
+
+
+class BacklightController:
+    """Controls the RPi Touch Display backlight via sysfs.
+
+    Auto-detects the first device under /sys/class/backlight/. Silently no-ops
+    on platforms without a backlight (dev laptops, --windowed mode).
+    """
+
+    def __init__(self, dim_level: int):
+        self._brightness_path: Path | None = None
+        self._normal: int | None = None
+        self._dim_level = max(0, dim_level)
+        self._dimmed = False
+
+        try:
+            device = next(_BACKLIGHT_ROOT.iterdir(), None) if _BACKLIGHT_ROOT.exists() else None
+            if device is None:
+                return
+            self._brightness_path = device / "brightness"
+            self._normal = int(self._brightness_path.read_text().strip())
+        except (OSError, ValueError) as exc:
+            log.debug(f"Backlight detect failed: {exc}")
+            self._brightness_path = None
+
+    def _write(self, value: int):
+        if self._brightness_path is None:
+            return
+        try:
+            self._brightness_path.write_text(f"{value}\n")
+        except OSError as exc:
+            log.warning(f"Backlight write failed ({value}): {exc}")
+
+    def dim(self):
+        if self._brightness_path is None or self._dimmed:
+            return
+        # Re-read current level so we restore whatever the user had, not a stale value.
+        try:
+            self._normal = int(self._brightness_path.read_text().strip())
+        except (OSError, ValueError):
+            pass
+        self._write(self._dim_level)
+        self._dimmed = True
+
+    def restore(self):
+        if self._brightness_path is None or not self._dimmed:
+            return
+        self._write(self._normal if self._normal is not None else 0)
+        self._dimmed = False
 
 
 def _wake_screen():
@@ -42,9 +96,6 @@ def _wake_screen():
         )
     except Exception:
         pass  # xset not available or display already on — ignore
-_IDLE_SWITCH_DELAY_MS = 20_000   # stay on active screen 20s after returning to IDLE
-
-_IDLE_STATES = {"IDLE", "SESSION_CHECK"}
 
 
 class FSMWorker(QThread):
@@ -75,11 +126,12 @@ class MainWindow(QMainWindow):
       Page 1 — Active:     StateBar / ChatView / SysBar
     """
 
-    def __init__(self, bus: UIEventBus):
+    def __init__(self, bus: UIEventBus, dim_after_s: int = 60, dim_level: int = 0):
         super().__init__()
         self._bus = bus
         self.setWindowTitle("Voice Assistant")
         self.setStyleSheet(MAIN_STYLESHEET)
+        self._backlight = BacklightController(dim_level=dim_level)
 
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -120,6 +172,14 @@ class MainWindow(QMainWindow):
         self._idle_timer.setInterval(_IDLE_SWITCH_DELAY_MS)
         self._idle_timer.timeout.connect(lambda: self._stack.setCurrentIndex(0))
 
+        # ── Backlight dim timer ───────────────────────────────────────────────
+        self._dim_timer = QTimer(self)
+        self._dim_timer.setSingleShot(True)
+        self._dim_after_s = max(0, dim_after_s)
+        if self._dim_after_s > 0:
+            self._dim_timer.setInterval(self._dim_after_s * 1000)
+            self._dim_timer.timeout.connect(self._backlight.dim)
+
         # ── Signal connections ────────────────────────────────────────────────
         bus.state_changed.connect(self._on_state_changed)
         bus.resource_updated.connect(self._on_resource_updated)
@@ -135,8 +195,12 @@ class MainWindow(QMainWindow):
         self._idle_screen.on_state_changed(state_name)
         if state_name in _IDLE_STATES:
             self._idle_timer.start()        # switch to clock after delay
+            if self._dim_after_s > 0:
+                self._dim_timer.start()     # dim backlight after longer delay
         else:
             self._idle_timer.stop()         # cancel pending idle switch
+            self._dim_timer.stop()          # cancel pending dim
+            self._backlight.restore()
             self._stack.setCurrentIndex(1)  # show active immediately
             _wake_screen()
 
@@ -164,6 +228,8 @@ class MainWindow(QMainWindow):
 
     def _on_shutdown(self):
         self._res_timer.stop()
+        self._dim_timer.stop()
+        self._backlight.restore()
         self.close()
 
     def show_fullscreen_rpi(self):
@@ -201,7 +267,18 @@ def run_ui(fsm) -> int:
     bus = UIEventBus()
     fsm.ui_bus = bus
 
-    window = MainWindow(bus)
+    display_cfg = {}
+    try:
+        from src.config import load_config
+        display_cfg = load_config().get("display") or {}
+    except Exception as exc:
+        log.debug(f"Display config load failed, using defaults: {exc}")
+
+    window = MainWindow(
+        bus,
+        dim_after_s=int(display_cfg.get("dim_after_idle_s", 60)),
+        dim_level=int(display_cfg.get("dim_min_level", 0)),
+    )
     window.show_fullscreen_rpi()
 
     worker = FSMWorker(fsm, bus)
