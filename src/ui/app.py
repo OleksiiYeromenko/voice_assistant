@@ -190,6 +190,12 @@ class MainWindow(QMainWindow):
         self._res_timer.timeout.connect(self._poll_resources)
         self._res_timer.start()
 
+        # FSM starts in IDLE but emits state_changed only on transitions, so
+        # arm the dim timer here — otherwise the screen never dims until the
+        # user invokes the assistant at least once.
+        if self._dim_after_s > 0:
+            self._dim_timer.start()
+
     # ── Touch / mouse wake ─────────────────────────────────────────────
     def event(self, ev: QEvent) -> bool:
         """Restore backlight on any touch or mouse interaction."""
