@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QThread, QTimer, Qt
+from PyQt6.QtCore import QEvent, QThread, QTimer, Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -180,6 +180,9 @@ class MainWindow(QMainWindow):
             self._dim_timer.setInterval(self._dim_after_s * 1000)
             self._dim_timer.timeout.connect(self._backlight.dim)
 
+        # Accept touch events so event() receives TouchBegin/TouchUpdate
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+
         # ── Signal connections ────────────────────────────────────────────────
         bus.state_changed.connect(self._on_state_changed)
         bus.resource_updated.connect(self._on_resource_updated)
@@ -190,6 +193,25 @@ class MainWindow(QMainWindow):
         self._res_timer.setInterval(_RESOURCE_POLL_INTERVAL_MS)
         self._res_timer.timeout.connect(self._poll_resources)
         self._res_timer.start()
+
+    # ── Touch / mouse wake ─────────────────────────────────────────────
+    def event(self, ev: QEvent) -> bool:
+        """Restore backlight on any touch or mouse interaction."""
+        if ev.type() in (
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.MouseButtonRelease,
+            QEvent.Type.TouchBegin,
+            QEvent.Type.TouchUpdate,
+        ):
+            self._wake_backlight()
+        return super().event(ev)
+
+    def _wake_backlight(self):
+        """Restore backlight and restart the dim timer."""
+        self._backlight.restore()
+        if self._dim_after_s > 0:
+            self._dim_timer.start()  # restart countdown
+        _wake_screen()
 
     def _on_state_changed(self, state_name: str):
         self._idle_screen.on_state_changed(state_name)

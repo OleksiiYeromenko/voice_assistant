@@ -5,8 +5,8 @@
 wake_word:
   # Pre-trained models: "hey_jarvis", "alexa", "hey_mycroft", "timer", etc.
   # Or path to custom .onnx model, e.g. "./models/my_wakeword.onnx"
-  model: "./models/hey_Poon-dyk_acc_0.85_rec_0.71_fp_6.0.onnx"
-  threshold: 0.99         # Detection confidence (0.0-1.0) — tune for your custom model
+  model: "./models/hey_Poon-dyk_acc_0.81_recall_0.62_fp_2.7.onnx"
+  threshold: 0.75         # Detection confidence (0.0-1.0) — tune for your custom model
 
 # --- Speech-to-Text ---
 stt:
@@ -98,7 +98,7 @@ session:
 # --- Display (UI mode only) ---
 display:
   dim_after_idle_s: 60       # Seconds of idle before dimming backlight to minimum (0 = disabled)
-  dim_min_level: 0           # Backlight value to set when dimming (0 = off, 1 = faintest visible)
+  dim_min_level: 1           # Backlight value to set when dimming (0 = off, 1 = faintest visible)
 
 # --- Resource Monitoring ---
 monitor:
