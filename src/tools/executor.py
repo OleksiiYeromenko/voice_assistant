@@ -8,6 +8,7 @@ Each tool is:
 import logging
 from typing import Any
 
+from src.tools.player import play_radio, set_volume, stop_playback
 from src.tools.timers import cancel_timer, set_timer
 
 log = logging.getLogger(__name__)
@@ -173,6 +174,48 @@ CANCEL_TIMER_TOOL = {
     },
 }
 
+PLAY_RADIO_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "play_radio",
+        "description": "Play an internet radio station by name, genre, or country (e.g. 'jazz', 'BBC Radio 1', 'classical German'). Use when the user asks to play music or radio.",
+        "parameters": {
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Station name, genre, or descriptive query",
+                },
+            },
+        },
+    },
+}
+
+STOP_PLAYBACK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "stop_playback",
+        "description": "Stop the currently playing radio/music.",
+        "parameters": {"type": "object", "required": [], "properties": {}},
+    },
+}
+
+SET_VOLUME_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "set_volume",
+        "description": "Set music/radio volume 0-100. Rough mapping: quiet=30, normal=70, loud=90, max=100. Only affects music; the assistant's own voice is unchanged.",
+        "parameters": {
+            "type": "object",
+            "required": ["level"],
+            "properties": {
+                "level": {"type": "integer", "description": "Volume 0-100"},
+            },
+        },
+    },
+}
+
 
 # All available tool schemas
 ALL_TOOLS = [
@@ -180,6 +223,7 @@ ALL_TOOLS = [
     SHOPPING_LIST_TOOL, GET_SHOPPING_LIST_TOOL,
     REMEMBER_TOOL, RECALL_TOOL,
     TIMER_TOOL, CANCEL_TIMER_TOOL,
+    PLAY_RADIO_TOOL, STOP_PLAYBACK_TOOL, SET_VOLUME_TOOL,
 ]
 
 # Tools whose results go stale immediately (e.g., time changes every minute).
@@ -477,6 +521,9 @@ _TOOL_FUNCTIONS: dict[str, callable] = {
     "add_to_shopping_list": add_to_shopping_list,
     "set_timer": set_timer,
     "cancel_timer": cancel_timer,
+    "play_radio": play_radio,
+    "stop_playback": stop_playback,
+    "set_volume": set_volume,
 }
 
 

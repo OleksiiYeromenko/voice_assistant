@@ -22,6 +22,7 @@ from src.llm.backends import (
 )
 from src.router.router import ModelRouter, RemoteAvailabilityMonitor
 from src.tools.executor import ALL_TOOLS, execute_tool, register_tool
+from src.tools.player import init_player
 from src.tools.timers import register_alert_callback
 
 log = logging.getLogger(__name__)
@@ -410,6 +411,7 @@ def assistant_loop(cfg: dict):
     )
 
     register_alert_callback(tts.speak)
+    init_player(cfg)
 
     backends, default_key = build_backends(cfg)
 

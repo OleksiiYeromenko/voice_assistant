@@ -141,6 +141,10 @@ class AssistantFSM:
                             self.session_id = new_sid
                     else:
                         break  # wake word detected; mic released
+                # Pause any playing stream so STT can hear cleanly; resume() fires
+                # at the end of _state_thinking after TTS has finished.
+                from src.tools.player import pause
+                pause()
                 proc = self.tts.play_greeting()
                 if proc is not None:
                     proc.wait()  # wait for greeting to finish before recording
@@ -312,6 +316,10 @@ class AssistantFSM:
                 print(f"  ⚠️  {alert}")
 
         self.last_interaction_time = time.time()
+
+        # Resume any stream that pause() suspended on the wake-word trigger.
+        from src.tools.player import resume
+        resume()
 
         return State.IDLE, {}
 

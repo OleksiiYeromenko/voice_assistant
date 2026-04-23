@@ -10,6 +10,7 @@ Usage:
   uv run scripts/test_components.py gemini-tools  # Test Gemini with tool calling (full round-trip)
   uv run scripts/test_components.py weather       # Test weather tool
   uv run scripts/test_components.py search        # Test web search tool
+  uv run scripts/test_components.py player        # Test radio search + mpv stream
   uv run scripts/test_components.py router        # Test model routing
   uv run scripts/test_components.py pipeline      # Test full text→LLM→tools→answer (no STT/TTS)
   uv run scripts/test_components.py all           # Run all tests
@@ -199,6 +200,37 @@ def test_search():
     return bool(result) and "No results" not in result
 
 
+def test_player():
+    print("\n" + "=" * 50)
+    print("Testing player (radio search + mpv stream)")
+    print("=" * 50)
+    from src.config import load_config
+    from src.tools.player import (
+        init_player, is_playing, play_radio, set_volume, stop_playback,
+    )
+
+    cfg = load_config()
+    init_player(cfg)
+
+    result = play_radio("jazz")
+    print(f"  play_radio: {result}")
+    if not is_playing():
+        print("  ✗ mpv didn't start")
+        return False
+
+    time.sleep(3)
+
+    vol_result = set_volume(40)
+    print(f"  set_volume: {vol_result}")
+
+    stop_result = stop_playback()
+    print(f"  stop_playback: {stop_result}")
+
+    # Give mpv a moment to exit after the quit IPC.
+    time.sleep(0.5)
+    return not is_playing()
+
+
 def test_router():
     print("\n" + "=" * 50)
     print("Testing model router")
@@ -330,6 +362,7 @@ TESTS = {
     "gemini-tools": test_gemini_tools,
     "weather": test_weather,
     "search": test_search,
+    "player": test_player,
     "router": test_router,
     "pipeline": test_pipeline,
 }

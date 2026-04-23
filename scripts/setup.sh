@@ -22,6 +22,7 @@ echo "→ Checking system packages..."
 NEEDED=""
 dpkg -s espeak-ng &>/dev/null || NEEDED="$NEEDED espeak-ng"
 dpkg -s alsa-utils &>/dev/null || NEEDED="$NEEDED alsa-utils"
+dpkg -s mpv &>/dev/null || NEEDED="$NEEDED mpv"
 # portaudio19-dev no longer needed — we use arecord (ALSA) directly
 
 if [ -n "$NEEDED" ]; then

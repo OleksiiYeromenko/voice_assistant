@@ -6,7 +6,7 @@ wake_word:
   # Pre-trained models: "hey_jarvis", "alexa", "hey_mycroft", "timer", etc.
   # Or path to custom .onnx model, e.g. "./models/my_wakeword.onnx"
   model: "./models/hey_Poon-dyk_acc_0.81_recall_0.62_fp_2.7.onnx"
-  threshold: 0.75         # Detection confidence (0.0-1.0) — tune for your custom model
+  threshold: 0.9         # Detection confidence (0.0-1.0) — tune for your custom model
 
 # --- Speech-to-Text ---
 stt:
@@ -89,6 +89,14 @@ tts:
   aplay_device: "plughw:2,0"  # USB audio device
   sentence_delimiters: ".!?;"
   sounds_dir: "./sounds"      # Pre-recorded WAV sounds; run scripts/generate_sounds.py --all to create
+
+# --- Media Player (internet radio via mpv + Radio Browser API) ---
+player:
+  ipc_socket: "/tmp/va-mpv.sock"
+  radio_browser_base: "https://de1.api.radio-browser.info"
+  search_limit: 5
+  request_timeout_s: 5
+  default_volume: 70         # Music-only starting volume (0-100); TTS is always at full volume
 
 # --- Session ---
 session:
