@@ -49,17 +49,23 @@ class BacklightController:
         self._brightness_path: Path | None = None
         self._normal: int | None = None
         self._dim_level = max(0, dim_level)
-        self._dimmed = False
 
         try:
             device = next(_BACKLIGHT_ROOT.iterdir(), None) if _BACKLIGHT_ROOT.exists() else None
             if device is None:
                 return
             self._brightness_path = device / "brightness"
-            self._normal = int(self._brightness_path.read_text().strip())
+            # Use max_brightness as "on" level. Reading current brightness is unsafe:
+            # if a prior run was killed while dimmed, sysfs still holds the dim value.
+            max_path = device / "max_brightness"
+            self._normal = int(max_path.read_text().strip())
         except (OSError, ValueError) as exc:
             log.debug(f"Backlight detect failed: {exc}")
             self._brightness_path = None
+
+        # Own the display state: restore full brightness on startup regardless
+        # of what we inherited from a previous process.
+        self.restore()
 
     def _write(self, value: int):
         if self._brightness_path is None:
@@ -70,21 +76,11 @@ class BacklightController:
             log.warning(f"Backlight write failed ({value}): {exc}")
 
     def dim(self):
-        if self._brightness_path is None or self._dimmed:
-            return
-        # Re-read current level so we restore whatever the user had, not a stale value.
-        try:
-            self._normal = int(self._brightness_path.read_text().strip())
-        except (OSError, ValueError):
-            pass
         self._write(self._dim_level)
-        self._dimmed = True
 
     def restore(self):
-        if self._brightness_path is None or not self._dimmed:
-            return
-        self._write(self._normal if self._normal is not None else 0)
-        self._dimmed = False
+        if self._normal is not None:
+            self._write(self._normal)
 
 
 def _wake_screen():
