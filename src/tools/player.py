@@ -176,18 +176,6 @@ def is_playing() -> bool:
         return _mpv_proc is not None and _mpv_proc.poll() is None
 
 
-def get_radio_status() -> dict:
-    """Return current radio state for LLM context injection.
-
-    Returns {"station": str | None, "active": bool} — active is True while
-    a stream is playing or paused-for-TTS (i.e. it will resume after THINKING).
-    """
-    with _lock:
-        station = _current_station or _paused_station
-        active = station is not None and (_mpv_proc is not None or _was_playing_before_pause)
-    return {"station": station, "active": active}
-
-
 def pause() -> None:
     """Kill the current stream to release the audio device; save state for resume().
 

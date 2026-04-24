@@ -253,16 +253,6 @@ class AssistantFSM:
             self.memory.build_system_prompt(model_info=model_info) if self.memory else ""
         )
 
-        # Inject live radio state so the LLM knows to call stop_playback if asked
-        from src.tools.player import get_radio_status
-
-        radio = get_radio_status()
-        if radio["active"] and radio["station"]:
-            system_prompt += (
-                f"\n\n[System: Radio is currently playing '{radio['station']}'. "
-                "To stop it you MUST call the stop_playback tool — do NOT just say you stopped it.]"
-            )
-
         # LLM + Tools + TTS
         tools_used: set[str] = set()
         try:

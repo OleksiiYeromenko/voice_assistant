@@ -205,7 +205,7 @@ STOP_PLAYBACK_TOOL = {
     "type": "function",
     "function": {
         "name": "stop_playback",
-        "description": "Stop the currently playing radio/music.",
+        "description": "Stop radio/music playback. Call this whenever the user asks to stop, pause, or turn off music — even if you are unsure whether something is playing. Safe to call when nothing is playing.",
         "parameters": {"type": "object", "required": [], "properties": {}},
     },
 }
