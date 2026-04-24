@@ -264,9 +264,7 @@ class MarkdownMemoryStore:
 
     def close_stale_sessions(self):
         """Close any sessions left open from a previous run (clean startup)."""
-        rows = self._conn.execute(
-            "SELECT id FROM sessions WHERE status = 'open'"
-        ).fetchall()
+        rows = self._conn.execute("SELECT id FROM sessions WHERE status = 'open'").fetchall()
         for row in rows:
             self.close_session(row["id"], summary=None)
             log.info(f"Closed stale session {row['id']} from previous run")

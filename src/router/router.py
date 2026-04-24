@@ -56,9 +56,9 @@ class RemoteAvailabilityMonitor:
 
 @dataclass
 class RouteDecision:
-    backend_key: str        # "remote", "local", "claude", "gemini"
-    reason: str             # Why this backend was chosen
-    cleaned_text: str       # User text with trigger phrase removed
+    backend_key: str  # "remote", "local", "claude", "gemini"
+    reason: str  # Why this backend was chosen
+    cleaned_text: str  # User text with trigger phrase removed
 
 
 class ModelRouter:
@@ -93,7 +93,9 @@ class ModelRouter:
                         log.info("Session preference cleared → automatic routing")
                         return RouteDecision(
                             backend_key=self.default_backend_key,
-                            reason=f"explicit trigger: '{pattern}' → auto ({self.default_backend_key})",
+                            reason=(
+                                f"explicit trigger: '{pattern}' → auto ({self.default_backend_key})"
+                            ),
                             cleaned_text=cleaned if cleaned else text,
                         )
 

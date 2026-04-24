@@ -23,7 +23,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-SENTENCE_RE = re.compile(r'\.(?!\d)\s+|[!?;]\s+')
+SENTENCE_RE = re.compile(r"\.(?!\d)\s+|[!?;]\s+")
 
 
 class _DelayedSound:
@@ -304,7 +304,7 @@ class TTSEngine:
                 if match:
                     last_match = match[-1]
                     complete = buffer[: last_match.end()].strip()
-                    buffer = buffer[last_match.end():]
+                    buffer = buffer[last_match.end() :]
 
                     if complete:
                         log.debug(f"TTS sentence: '{complete}'")
@@ -321,9 +321,7 @@ class TTSEngine:
 
                         # Track time to first audio chunk
                         if not first_chunk_recorded and latency is not None:
-                            latency.tts_first_chunk_ms = (
-                                time.perf_counter() - stream_start
-                            ) * 1000
+                            latency.tts_first_chunk_ms = (time.perf_counter() - stream_start) * 1000
                             first_chunk_recorded = True
 
         # Speak any remaining text in buffer

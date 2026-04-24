@@ -3,9 +3,9 @@
 # ---------------------------------------------------------------------------
 # Background layers
 # ---------------------------------------------------------------------------
-BG_DEEPEST = "#0D0D1A"    # main window / outermost
-BG_SURFACE = "#1A1A2E"    # chat text area, card surfaces
-BG_ELEVATED = "#22223A"   # bars, badge backgrounds
+BG_DEEPEST = "#0D0D1A"  # main window / outermost
+BG_SURFACE = "#1A1A2E"  # chat text area, card surfaces
+BG_ELEVATED = "#22223A"  # bars, badge backgrounds
 
 # ---------------------------------------------------------------------------
 # Text
@@ -13,39 +13,39 @@ BG_ELEVATED = "#22223A"   # bars, badge backgrounds
 TEXT_PRIMARY = "#E8E8E8"
 TEXT_SECONDARY = "#9090A0"
 TEXT_MUTED = "#606070"
-TEXT_ACCENT = "#4FC3F7"    # "You:" prefix, interactive highlights
+TEXT_ACCENT = "#4FC3F7"  # "You:" prefix, interactive highlights
 
 # ---------------------------------------------------------------------------
 # State pill — (background, foreground) per state name
 # ---------------------------------------------------------------------------
 STATE_COLORS: dict[str, tuple[str, str]] = {
-    "IDLE":          ("#2D3748", "#718096"),
+    "IDLE": ("#2D3748", "#718096"),
     "SESSION_CHECK": ("#2D3748", "#718096"),
-    "LISTENING":     ("#1B5E20", "#69F0AE"),
-    "THINKING":      ("#4A3000", "#FFB300"),
-    "SPEAKING":      ("#00204A", "#40C4FF"),
+    "LISTENING": ("#1B5E20", "#69F0AE"),
+    "THINKING": ("#4A3000", "#FFB300"),
+    "SPEAKING": ("#00204A", "#40C4FF"),
 }
 
 # ---------------------------------------------------------------------------
 # Model badge — (background, foreground) per backend key
 # ---------------------------------------------------------------------------
 MODEL_COLORS: dict[str, tuple[str, str]] = {
-    "remote":  ("#006064", "#00E5FF"),   # GPU PC — teal/cyan
-    "local":   ("#1B5E20", "#69F0AE"),   # RPi local — green
-    "claude":  ("#4A1A00", "#FF9800"),   # Claude — orange
-    "gemini":  ("#1A0060", "#B388FF"),   # Gemini — purple
+    "remote": ("#006064", "#00E5FF"),  # GPU PC — teal/cyan
+    "local": ("#1B5E20", "#69F0AE"),  # RPi local — green
+    "claude": ("#4A1A00", "#FF9800"),  # Claude — orange
+    "gemini": ("#1A0060", "#B388FF"),  # Gemini — purple
 }
 MODEL_LABELS: dict[str, str] = {
     "remote": "GPU",
-    "local":  "RPi",
+    "local": "RPi",
     "claude": "Claude",
     "gemini": "Gemini",
 }
 MODEL_ICONS: dict[str, str] = {
-    "remote": "⚡",   # GPU PC — fast/powerful
-    "local":  "◉",   # Raspberry Pi — compact local device
-    "claude": "☁",   # Claude cloud API
-    "gemini": "☁",   # Gemini cloud API
+    "remote": "⚡",  # GPU PC — fast/powerful
+    "local": "◉",  # Raspberry Pi — compact local device
+    "claude": "☁",  # Claude cloud API
+    "gemini": "☁",  # Gemini cloud API
 }
 
 # ---------------------------------------------------------------------------
@@ -57,9 +57,9 @@ IDLE_DATE_FONT_SIZE = 28
 # ---------------------------------------------------------------------------
 # Resource thresholds (CPU & temp gauge colors)
 # ---------------------------------------------------------------------------
-COLOR_OK   = "#4CAF50"   # < 70% CPU / < 60°C
-COLOR_WARN = "#FFC107"   # < 85% CPU / < 75°C
-COLOR_CRIT = "#F44336"   # ≥ 85% CPU / ≥ 75°C
+COLOR_OK = "#4CAF50"  # < 70% CPU / < 60°C
+COLOR_WARN = "#FFC107"  # < 85% CPU / < 75°C
+COLOR_CRIT = "#F44336"  # ≥ 85% CPU / ≥ 75°C
 
 
 def cpu_color(pct: float) -> str:

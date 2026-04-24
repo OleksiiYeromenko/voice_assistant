@@ -69,7 +69,9 @@ class TemperatureLabel(QWidget):
     def update_temp(self, celsius: float | None):
         if celsius is None:
             self._value.setText("—")
-            self._value.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 22px; font-weight: bold;")
+            self._value.setStyleSheet(
+                f"color: {theme.TEXT_MUTED}; font-size: 22px; font-weight: bold;"
+            )
         else:
             color = theme.temp_color(celsius)
             self._value.setText(f"{celsius:.0f}°C")
@@ -103,7 +105,9 @@ class LatencyPanel(QWidget):
             return f"{ms:.0f}ms"
         return f"{ms / 1000:.1f}s"
 
-    def update_metrics(self, stt_ms: float, ttft_ms: float, llm_ms: float, token_count: float, model: str):
+    def update_metrics(
+        self, stt_ms: float, ttft_ms: float, llm_ms: float, token_count: float, model: str
+    ):
         self._stt.setText(f"STT  {self._fmt(stt_ms)}")
         self._ttft.setText(f"TTFT {self._fmt(ttft_ms)}")
         tps_str = f"{token_count / (llm_ms / 1000):.1f}" if llm_ms > 0 and token_count > 0 else "—"
@@ -117,7 +121,9 @@ class SysBar(QWidget):
         super().__init__(parent)
         self.setFixedHeight(80)
         self.setObjectName("sys_bar")
-        self.setStyleSheet(f"#sys_bar {{ background-color: {theme.BG_ELEVATED}; border-top: 1px solid #2A2A45; }}")
+        self.setStyleSheet(
+            f"#sys_bar {{ background-color: {theme.BG_ELEVATED}; border-top: 1px solid #2A2A45; }}"
+        )
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -131,7 +137,7 @@ class SysBar(QWidget):
         # Divider
         divider = QWidget(self)
         divider.setFixedWidth(1)
-        divider.setStyleSheet(f"background-color: #2A2A45;")
+        divider.setStyleSheet("background-color: #2A2A45;")
         divider.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
         layout.addWidget(self._cpu, stretch=2)
@@ -156,5 +162,7 @@ class SysBar(QWidget):
 
         self._temp.update_temp(temp)
 
-    def _on_metrics_updated(self, stt_ms: float, ttft_ms: float, llm_ms: float, token_count: float, model: str):
+    def _on_metrics_updated(
+        self, stt_ms: float, ttft_ms: float, llm_ms: float, token_count: float, model: str
+    ):
         self._latency.update_metrics(stt_ms, ttft_ms, llm_ms, token_count, model)

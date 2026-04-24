@@ -33,7 +33,7 @@ from src.ui.widgets.sys_bar import SysBar
 log = logging.getLogger(__name__)
 
 _RESOURCE_POLL_INTERVAL_MS = 5_000
-_IDLE_SWITCH_DELAY_MS = 20_000   # stay on active screen 20s after returning to IDLE
+_IDLE_SWITCH_DELAY_MS = 20_000  # stay on active screen 20s after returning to IDLE
 _BACKLIGHT_ROOT = Path("/sys/class/backlight")
 
 _IDLE_STATES = {"IDLE", "SESSION_CHECK"}
@@ -89,7 +89,9 @@ def _wake_screen():
     try:
         subprocess.run(
             ["xset", "-display", ":0", "dpms", "force", "on"],
-            check=False, timeout=1, capture_output=True,
+            check=False,
+            timeout=1,
+            capture_output=True,
         )
     except Exception:
         pass  # xset not available or display already on — ignore
@@ -220,12 +222,12 @@ class MainWindow(QMainWindow):
     def _on_state_changed(self, state_name: str):
         self._idle_screen.on_state_changed(state_name)
         if state_name in _IDLE_STATES:
-            self._idle_timer.start()        # switch to clock after delay
+            self._idle_timer.start()  # switch to clock after delay
             if self._dim_after_s > 0:
-                self._dim_timer.start()     # dim backlight after longer delay
+                self._dim_timer.start()  # dim backlight after longer delay
         else:
-            self._idle_timer.stop()         # cancel pending idle switch
-            self._dim_timer.stop()          # cancel pending dim
+            self._idle_timer.stop()  # cancel pending idle switch
+            self._dim_timer.stop()  # cancel pending dim
             self._backlight.restore()
             self._stack.setCurrentIndex(1)  # show active immediately
             _wake_screen()
@@ -242,6 +244,7 @@ class MainWindow(QMainWindow):
     def _poll_resources(self):
         try:
             from src.monitor import snapshot
+
             snap = snapshot()
             self._bus.resource_updated.emit(
                 snap.cpu_percent,
@@ -280,6 +283,7 @@ def run_ui(fsm) -> int:
 
     # Ensure display env vars are set when running from SSH
     import os
+
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
         os.environ["DISPLAY"] = ":0"
     if not os.environ.get("XDG_RUNTIME_DIR"):
@@ -298,6 +302,7 @@ def run_ui(fsm) -> int:
     display_cfg = {}
     try:
         from src.config import load_config
+
         display_cfg = load_config().get("display") or {}
     except Exception as exc:
         log.debug(f"Display config load failed, using defaults: {exc}")

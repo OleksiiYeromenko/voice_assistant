@@ -31,12 +31,12 @@ log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _mpv_proc: subprocess.Popen | None = None
 _current_station: str | None = None
-_current_url: str | None = None          # URL of the active/last stream
+_current_url: str | None = None  # URL of the active/last stream
 _was_playing_before_pause: bool = False
-_paused_url: str | None = None           # saved URL so resume() can restart
-_paused_station: str | None = None       # saved station name for display
+_paused_url: str | None = None  # saved URL so resume() can restart
+_paused_station: str | None = None  # saved station name for display
 
-_radio_change_callback = None   # (station_name: str) → None; "" means stopped
+_radio_change_callback = None  # (station_name: str) → None; "" means stopped
 _ipc_path: str = "/tmp/va-mpv.sock"
 _radio_browser_base: str = "https://de1.api.radio-browser.info"
 _search_limit: int = 5
@@ -176,6 +176,18 @@ def is_playing() -> bool:
         return _mpv_proc is not None and _mpv_proc.poll() is None
 
 
+def get_radio_status() -> dict:
+    """Return current radio state for LLM context injection.
+
+    Returns {"station": str | None, "active": bool} — active is True while
+    a stream is playing or paused-for-TTS (i.e. it will resume after THINKING).
+    """
+    with _lock:
+        station = _current_station or _paused_station
+        active = station is not None and (_mpv_proc is not None or _was_playing_before_pause)
+    return {"station": station, "active": active}
+
+
 def pause() -> None:
     """Kill the current stream to release the audio device; save state for resume().
 
@@ -183,6 +195,7 @@ def pause() -> None:
     terminate the process outright and restart it in resume() once TTS is done.
     """
     global _was_playing_before_pause, _paused_url, _paused_station
+    was_killed = False
     with _lock:
         if _mpv_proc is None or _mpv_proc.poll() is not None:
             return
@@ -194,6 +207,11 @@ def pause() -> None:
             _was_playing_before_pause = True
             _paused_url = url
             _paused_station = station
+            was_killed = True
+    if was_killed:
+        # ALSA holds the device briefly after the process exits; give it a moment
+        # so that the greeting sound played immediately after can open the device.
+        time.sleep(0.15)
 
 
 def resume() -> None:

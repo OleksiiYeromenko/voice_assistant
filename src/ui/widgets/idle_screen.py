@@ -38,8 +38,7 @@ class IdleScreen(QWidget):
         self._clock_label = QLabel(self)
         self._clock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._clock_label.setStyleSheet(
-            f"color: {theme.TEXT_PRIMARY};"
-            f"font-size: {theme.IDLE_CLOCK_FONT_SIZE}px;"
+            f"color: {theme.TEXT_PRIMARY};font-size: {theme.IDLE_CLOCK_FONT_SIZE}px;"
         )
 
         self._date_label = QLabel(self)
@@ -61,9 +60,7 @@ class IdleScreen(QWidget):
 
         self._state_label = QLabel("● IDLE", self)
         idle_fg = theme.STATE_COLORS["IDLE"][1]
-        self._state_label.setStyleSheet(
-            f"color: {idle_fg}; font-size: 18px; font-weight: bold;"
-        )
+        self._state_label.setStyleSheet(f"color: {idle_fg}; font-size: 18px; font-weight: bold;")
 
         self._radio_label = QLabel("", self)
         self._radio_label.setStyleSheet(
@@ -72,30 +69,21 @@ class IdleScreen(QWidget):
         self._radio_label.setVisible(False)
 
         self._temp_label = QLabel("", self)
-        self._temp_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
+        self._temp_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._temp_label.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-size: 18px;"
-            f"font-family: 'DejaVu Sans Mono';"
+            f"color: {theme.TEXT_MUTED}; font-size: 18px;font-family: 'DejaVu Sans Mono';"
         )
 
         self._cpu_label = QLabel("", self)
-        self._cpu_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
+        self._cpu_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._cpu_label.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-size: 18px;"
-            f"font-family: 'DejaVu Sans Mono';"
+            f"color: {theme.TEXT_MUTED}; font-size: 18px;font-family: 'DejaVu Sans Mono';"
         )
 
         self._ram_label = QLabel("", self)
-        self._ram_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
+        self._ram_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._ram_label.setStyleSheet(
-            f"color: {theme.TEXT_MUTED}; font-size: 18px;"
-            f"font-family: 'DejaVu Sans Mono';"
+            f"color: {theme.TEXT_MUTED}; font-size: 18px;font-family: 'DejaVu Sans Mono';"
         )
 
         bottom_layout.addWidget(self._state_label)
@@ -129,23 +117,20 @@ class IdleScreen(QWidget):
             color = theme.temp_color(temp)
             self._temp_label.setText(f"{temp:.0f}°C")
             self._temp_label.setStyleSheet(
-                f"color: {color}; font-size: 18px;"
-                f"font-family: 'DejaVu Sans Mono';"
+                f"color: {color}; font-size: 18px;font-family: 'DejaVu Sans Mono';"
             )
 
         cpu_color = theme.cpu_color(cpu_pct)
         self._cpu_label.setText(f"CPU {cpu_pct:.0f}%")
         self._cpu_label.setStyleSheet(
-            f"color: {cpu_color}; font-size: 18px;"
-            f"font-family: 'DejaVu Sans Mono';"
+            f"color: {cpu_color}; font-size: 18px;font-family: 'DejaVu Sans Mono';"
         )
 
         ram_pct = (ram_used_mb / ram_total_mb * 100) if ram_total_mb > 0 else 0
         ram_color = theme.cpu_color(ram_pct)
         self._ram_label.setText(f"{ram_used_mb / 1024:.1f}GB RAM")
         self._ram_label.setStyleSheet(
-            f"color: {ram_color}; font-size: 18px;"
-            f"font-family: 'DejaVu Sans Mono';"
+            f"color: {ram_color}; font-size: 18px;font-family: 'DejaVu Sans Mono';"
         )
 
     def on_radio_changed(self, station: str):
@@ -160,15 +145,11 @@ class IdleScreen(QWidget):
         """Update bottom strip state pill (e.g. SESSION_CHECK before going active)."""
         _, fg = theme.STATE_COLORS.get(state_name, theme.STATE_COLORS["IDLE"])
         self._state_label.setText(f"● {state_name}")
-        self._state_label.setStyleSheet(
-            f"color: {fg}; font-size: 18px; font-weight: bold;"
-        )
+        self._state_label.setStyleSheet(f"color: {fg}; font-size: 18px; font-weight: bold;")
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
     def _update_clock(self):
         now = datetime.now()
         self._clock_label.setText(now.strftime("%H:%M"))
-        self._date_label.setText(
-            now.strftime("%A, ") + str(now.day) + now.strftime(" %B")
-        )
+        self._date_label.setText(now.strftime("%A, ") + str(now.day) + now.strftime(" %B"))

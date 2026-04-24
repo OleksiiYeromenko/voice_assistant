@@ -10,7 +10,7 @@ from src.ui import theme
 _THINKING_DOT_FRAMES = ("", ".", "..", "...")
 _THINKING_INTERVAL_MS = 400
 # Listening pulse: alternate between bright and dim fg color via stylesheet
-_LISTENING_PULSE_FRAMES = (True, False)   # True = bright, False = dim
+_LISTENING_PULSE_FRAMES = (True, False)  # True = bright, False = dim
 _LISTENING_PULSE_MS = 500
 _CLOCK_INTERVAL_MS = 30_000
 
@@ -31,7 +31,7 @@ class StatePill(QLabel):
         self._anim_timer = QTimer(self)
         self._anim_timer.timeout.connect(self._tick)
         self._anim_frame = 0
-        self._anim_mode = ""   # "listen" | "think" | ""
+        self._anim_mode = ""  # "listen" | "think" | ""
 
         self._bg = ""
         self._fg_bright = ""
@@ -77,14 +77,14 @@ class StatePill(QLabel):
             self._anim_timer.setInterval(_THINKING_INTERVAL_MS)
             self._anim_timer.start()
         elif state_name == "SPEAKING":
-            self._anim_mode = "listen"   # same bright↔dim pulse, different color
+            self._anim_mode = "listen"  # same bright↔dim pulse, different color
             self._anim_timer.setInterval(_LISTENING_PULSE_MS)
             self._anim_timer.start()
 
     def _tick(self):
         self._anim_frame += 1
         if self._anim_mode == "listen":
-            bright = (self._anim_frame % 2 == 0)
+            bright = self._anim_frame % 2 == 0
             fg = self._fg_bright if bright else self._fg_dim
             self._apply_pill_style(self._bg, fg)
         elif self._anim_mode == "think":

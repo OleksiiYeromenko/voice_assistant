@@ -27,8 +27,8 @@ class UIEventBus(QObject):
     user_said = pyqtSignal(str)
 
     # Tool call lifecycle
-    tool_started = pyqtSignal(str)          # tool name
-    tool_done = pyqtSignal(str, str)        # tool name, short result (≤80 chars)
+    tool_started = pyqtSignal(str)  # tool name
+    tool_done = pyqtSignal(str, str)  # tool name, short result (≤80 chars)
 
     # Latency after each full pipeline pass: stt_ms, ttft_ms, llm_ms, token_count, model_name
     metrics_updated = pyqtSignal(float, float, float, float, str)

@@ -26,6 +26,7 @@ class ToolCall:
 @dataclass
 class LLMChunk:
     """One piece of a streaming response."""
+
     text: str = ""
     thinking: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
@@ -88,11 +89,12 @@ class OllamaBackend:
     ):
         import httpx
         import ollama
+
         self._client = ollama.Client(
             host=base_url,
             timeout=httpx.Timeout(connect=2.0, read=300.0, write=30.0, pool=10.0),
         )
-        self._base_url = base_url.rstrip("/")   # stored for is_loaded() / diagnostics
+        self._base_url = base_url.rstrip("/")  # stored for is_loaded() / diagnostics
         self._model = model
         self._temperature = temperature
         self._num_ctx = num_ctx
@@ -153,7 +155,9 @@ class OllamaBackend:
             err = str(e).lower()
             if "404" in err or "not found" in err:
                 # Model not installed on this server — retrying won't help
-                log.warning(f"Warm-up skipped for {self._model} on {self._base_url}: model not found (404)")
+                log.warning(
+                    f"Warm-up skipped for {self._model} on {self._base_url}: model not found (404)"
+                )
                 raise  # propagate so the caller can skip retries immediately
             log.warning(f"Warm-up failed for {self._model}: {e}")
 
@@ -165,12 +169,10 @@ class OllamaBackend:
         try:
             import json as _json
             import urllib.request as _req
+
             with _req.urlopen(f"{self._base_url}/api/ps", timeout=3) as r:
                 data = _json.loads(r.read())
-            return any(
-                m.get("model", "").startswith(self._model)
-                for m in data.get("models", [])
-            )
+            return any(m.get("model", "").startswith(self._model) for m in data.get("models", []))
         except Exception:
             return False
 
@@ -240,7 +242,7 @@ class OllamaBackend:
                             buf = buf[safe:]
                             break
                         visible += buf[:idx]
-                        buf = buf[idx + 7:]  # skip "<think>"
+                        buf = buf[idx + 7 :]  # skip "<think>"
                         in_think = True
                     else:
                         idx = buf.find("</think>")
@@ -251,17 +253,19 @@ class OllamaBackend:
                             buf = buf[safe:]
                             break
                         thinking += buf[:idx]
-                        buf = buf[idx + 8:]  # skip "</think>"
+                        buf = buf[idx + 8 :]  # skip "</think>"
                         in_think = False
 
                 tool_calls = []
                 if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
                         fn = tc.get("function", {})
-                        tool_calls.append(ToolCall(
-                            name=fn.get("name", ""),
-                            arguments=fn.get("arguments", {}),
-                        ))
+                        tool_calls.append(
+                            ToolCall(
+                                name=fn.get("name", ""),
+                                arguments=fn.get("arguments", {}),
+                            )
+                        )
 
                 yield LLMChunk(
                     text=visible,
@@ -304,6 +308,7 @@ class LlamaCppBackend:
         label: str = "local",
     ):
         import httpx
+
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._temperature = temperature
@@ -335,14 +340,16 @@ class LlamaCppBackend:
                     name = fn["name"]
                     args = fn.get("arguments", {})
                     call_id = tc.get("id") or f"call_{name}_{i}"
-                    new_tcs.append({
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": json.dumps(args) if isinstance(args, dict) else args,
-                        },
-                    })
+                    new_tcs.append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(args) if isinstance(args, dict) else args,
+                            },
+                        }
+                    )
                     pending.append((name, call_id))
                 normalized.append({**msg, "tool_calls": new_tcs})
             elif msg["role"] == "tool":
@@ -353,11 +360,13 @@ class LlamaCppBackend:
                         call_id = cid
                         pending.pop(i)
                         break
-                normalized.append({
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": str(msg.get("content", "")),
-                })
+                normalized.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": str(msg.get("content", "")),
+                    }
+                )
             else:
                 normalized.append(msg)
 
@@ -461,6 +470,7 @@ class LlamaCppBackend:
 class ClaudeBackend:
     def __init__(self, model: str = "claude-sonnet-4-5-20250929", max_tokens: int = 1024):
         import anthropic
+
         self._client = anthropic.Anthropic()  # Uses ANTHROPIC_API_KEY env var
         self._model = model
         self._max_tokens = max_tokens
@@ -537,11 +547,13 @@ class ClaudeBackend:
         anthropic_tools = []
         for t in ollama_tools:
             fn = t.get("function", t)
-            anthropic_tools.append({
-                "name": fn["name"],
-                "description": fn.get("description", ""),
-                "input_schema": fn.get("parameters", {}),
-            })
+            anthropic_tools.append(
+                {
+                    "name": fn["name"],
+                    "description": fn.get("description", ""),
+                    "input_schema": fn.get("parameters", {}),
+                }
+            )
         return anthropic_tools
 
 
@@ -551,6 +563,7 @@ class ClaudeBackend:
 class GeminiBackend:
     def __init__(self, model: str = "gemini-2.0-flash", max_tokens: int = 1024):
         from google import genai
+
         self._client = genai.Client()  # Uses GOOGLE_API_KEY env var
         self._model = model
         self._max_tokens = max_tokens
@@ -588,10 +601,12 @@ class GeminiBackend:
                 if fc_list:
                     tool_calls = []
                     for fc in fc_list:
-                        tool_calls.append(ToolCall(
-                            name=fc.name,
-                            arguments=dict(fc.args) if fc.args else {},
-                        ))
+                        tool_calls.append(
+                            ToolCall(
+                                name=fc.name,
+                                arguments=dict(fc.args) if fc.args else {},
+                            )
+                        )
                     yield LLMChunk(tool_calls=tool_calls, model=self.name)
                 else:
                     text = chunk.text if hasattr(chunk, "text") and chunk.text else ""
@@ -629,10 +644,12 @@ class GeminiBackend:
                 parts = []
                 while i < len(messages) and messages[i]["role"] == "tool":
                     tmsg = messages[i]
-                    parts.append(types.Part.from_function_response(
-                        name=tmsg.get("tool_name", "unknown"),
-                        response={"result": tmsg.get("content", "")},
-                    ))
+                    parts.append(
+                        types.Part.from_function_response(
+                            name=tmsg.get("tool_name", "unknown"),
+                            response={"result": tmsg.get("content", "")},
+                        )
+                    )
                     i += 1
                 contents.append(types.Content(role="user", parts=parts))
                 continue
@@ -647,19 +664,25 @@ class GeminiBackend:
                 if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
                         fn = tc.get("function", tc)  # support both nested and flat
-                        parts.append(types.Part(function_call=types.FunctionCall(
-                            name=fn["name"],
-                            args=fn.get("arguments", {}),
-                        )))
+                        parts.append(
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    name=fn["name"],
+                                    args=fn.get("arguments", {}),
+                                )
+                            )
+                        )
                 if not parts:
                     parts.append(types.Part(text=""))
                 contents.append(types.Content(role="model", parts=parts))
             else:
                 # user message
-                contents.append(types.Content(
-                    role="user",
-                    parts=[types.Part(text=msg.get("content", ""))],
-                ))
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text=msg.get("content", ""))],
+                    )
+                )
 
             i += 1
 
@@ -673,9 +696,11 @@ class GeminiBackend:
         declarations = []
         for t in ollama_tools:
             fn = t.get("function", t)
-            declarations.append(types.FunctionDeclaration(
-                name=fn["name"],
-                description=fn.get("description", ""),
-                parameters=fn.get("parameters", {}),
-            ))
+            declarations.append(
+                types.FunctionDeclaration(
+                    name=fn["name"],
+                    description=fn.get("description", ""),
+                    parameters=fn.get("parameters", {}),
+                )
+            )
         return [types.Tool(function_declarations=declarations)]

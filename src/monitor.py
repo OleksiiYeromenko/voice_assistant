@@ -1,8 +1,8 @@
 """Resource monitor — CPU, RAM, temperature, latency tracking."""
 
-import time
 import logging
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 
 import psutil
 
@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class LatencyRecord:
     """Timing for one full pipeline pass."""
+
     wake_ms: float = 0.0
     stt_ms: float = 0.0
     router_ms: float = 0.0
@@ -34,7 +35,9 @@ class LatencyRecord:
         if self.stt_ms:
             stages.append(f"STT {self._fmt(self.stt_ms)}")
         if self.llm_ms:
-            ttft = f" (ttft {self._fmt(self.llm_first_token_ms)})" if self.llm_first_token_ms else ""
+            ttft = (
+                f" (ttft {self._fmt(self.llm_first_token_ms)})" if self.llm_first_token_ms else ""
+            )
             stages.append(f"LLM {self._fmt(self.llm_ms)}{ttft}")
         if self.tts_first_chunk_ms:
             stages.append(f"TTS {self._fmt(self.tts_first_chunk_ms)}")
@@ -58,9 +61,7 @@ class ResourceSnapshot:
     def summary(self) -> str:
         t = f" temp={self.temp_celsius:.1f}°C" if self.temp_celsius else ""
         return (
-            f"cpu={self.cpu_percent:.0f}% "
-            f"ram={self.ram_used_mb:.0f}/{self.ram_total_mb:.0f}MB"
-            f"{t}"
+            f"cpu={self.cpu_percent:.0f}% ram={self.ram_used_mb:.0f}/{self.ram_total_mb:.0f}MB{t}"
         )
 
 

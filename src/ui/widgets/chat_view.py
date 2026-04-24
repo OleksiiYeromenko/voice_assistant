@@ -6,10 +6,10 @@ from PyQt6.QtWidgets import QFrame, QLabel, QTextEdit, QVBoxLayout, QWidget
 
 from src.ui import theme
 
-_TOOL_RUNNING_COLOR = "#90CAF9"   # blue — executing
-_TOOL_DONE_COLOR    = "#69F0AE"   # green — complete
-_RESPONSE_COLOR     = theme.TEXT_PRIMARY
-_TOOL_FONT_SIZE     = 16
+_TOOL_RUNNING_COLOR = "#90CAF9"  # blue — executing
+_TOOL_DONE_COLOR = "#69F0AE"  # green — complete
+_RESPONSE_COLOR = theme.TEXT_PRIMARY
+_TOOL_FONT_SIZE = 16
 _RESPONSE_FONT_SIZE = 28
 
 
@@ -30,9 +30,7 @@ class UserSpeechLabel(QLabel):
 
     def set_text(self, text: str):
         self.setText(f"You: {text}")
-        self.setStyleSheet(
-            f"color: {theme.TEXT_PRIMARY}; font-style: italic; font-size: 24px;"
-        )
+        self.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-style: italic; font-size: 24px;")
 
     def clear_speech(self):
         self._set_placeholder()
@@ -136,9 +134,9 @@ class ConversationLog(QTextEdit):
 
 class ChatView(QWidget):
     """Main content area:
-        - UserSpeechLabel (fixed 68px)
-        - Thin horizontal separator
-        - ConversationLog (stretches to fill) — shows tool events + LLM response
+    - UserSpeechLabel (fixed 68px)
+    - Thin horizontal separator
+    - ConversationLog (stretches to fill) — shows tool events + LLM response
     """
 
     def __init__(self, bus, parent=None):

@@ -130,12 +130,17 @@ class AssistantFSM:
         else:  # WAKE_WORD
             try:
                 from src.main import _maybe_end_session
+
                 while True:
                     val = next(self._wake_gen)
                     if val is None:  # heartbeat — check for session expiry while idle
                         new_sid = _maybe_end_session(
-                            self.conversation, self.memory, self.backends,
-                            self.cfg, self.last_interaction_time, self.session_id,
+                            self.conversation,
+                            self.memory,
+                            self.backends,
+                            self.cfg,
+                            self.last_interaction_time,
+                            self.session_id,
                         )
                         if new_sid is not None:
                             self.session_id = new_sid
@@ -144,6 +149,7 @@ class AssistantFSM:
                 # Pause any playing stream so STT can hear cleanly; resume() fires
                 # at the end of _state_thinking after TTS has finished.
                 from src.tools.player import pause
+
                 pause()
                 proc = self.tts.play_greeting()
                 if proc is not None:
@@ -160,8 +166,12 @@ class AssistantFSM:
         from src.main import _maybe_end_session
 
         new_sid = _maybe_end_session(
-            self.conversation, self.memory, self.backends,
-            self.cfg, self.last_interaction_time, self.session_id,
+            self.conversation,
+            self.memory,
+            self.backends,
+            self.cfg,
+            self.last_interaction_time,
+            self.session_id,
         )
         if new_sid is not None:
             self.session_id = new_sid
@@ -220,7 +230,9 @@ class AssistantFSM:
         latency.router_ms = route_timer.elapsed_ms
 
         backend = self.router.get_backend(decision.backend_key)
-        actual_key = next((k for k, v in self.router.backends.items() if v is backend), decision.backend_key)
+        actual_key = next(
+            (k for k, v in self.router.backends.items() if v is backend), decision.backend_key
+        )
         log.info(f"Router: {decision.reason} → {backend.name}")
 
         if self.ui_bus is not None:
@@ -237,21 +249,43 @@ class AssistantFSM:
 
         # Tell the model which backend it's running on
         model_info = f"You are running as: {backend.name} (backend: {decision.backend_key})"
-        system_prompt = self.memory.build_system_prompt(model_info=model_info) if self.memory else ""
+        system_prompt = (
+            self.memory.build_system_prompt(model_info=model_info) if self.memory else ""
+        )
+
+        # Inject live radio state so the LLM knows to call stop_playback if asked
+        from src.tools.player import get_radio_status
+
+        radio = get_radio_status()
+        if radio["active"] and radio["station"]:
+            system_prompt += (
+                f"\n\n[System: Radio is currently playing '{radio['station']}'. "
+                "To stop it you MUST call the stop_playback tool — do NOT just say you stopped it.]"
+            )
 
         # LLM + Tools + TTS
         tools_used: set[str] = set()
         try:
             if isinstance(backend, (OllamaBackend, LlamaCppBackend, GeminiBackend)):
                 response, tools_used = run_llm_with_tools(
-                    backend, list(recent), ALL_TOOLS, system_prompt,
-                    self.tts, latency, thinking_proc=thinking_proc,
+                    backend,
+                    list(recent),
+                    ALL_TOOLS,
+                    system_prompt,
+                    self.tts,
+                    latency,
+                    thinking_proc=thinking_proc,
                     ui_bus=self.ui_bus,
                 )
             else:
                 response, tools_used = run_streaming_llm(
-                    backend, list(recent), ALL_TOOLS, system_prompt,
-                    self.tts, latency, thinking_proc=thinking_proc,
+                    backend,
+                    list(recent),
+                    ALL_TOOLS,
+                    system_prompt,
+                    self.tts,
+                    latency,
+                    thinking_proc=thinking_proc,
                     ui_bus=self.ui_bus,
                 )
         except Exception as e:
@@ -269,14 +303,24 @@ class AssistantFSM:
                 try:
                     if isinstance(fallback, (OllamaBackend, LlamaCppBackend, GeminiBackend)):
                         response, tools_used = run_llm_with_tools(
-                            fallback, list(recent), ALL_TOOLS, system_prompt,
-                            self.tts, latency, thinking_proc=thinking_proc,
+                            fallback,
+                            list(recent),
+                            ALL_TOOLS,
+                            system_prompt,
+                            self.tts,
+                            latency,
+                            thinking_proc=thinking_proc,
                             ui_bus=self.ui_bus,
                         )
                     else:
                         response, tools_used = run_streaming_llm(
-                            fallback, list(recent), ALL_TOOLS, system_prompt,
-                            self.tts, latency, thinking_proc=thinking_proc,
+                            fallback,
+                            list(recent),
+                            ALL_TOOLS,
+                            system_prompt,
+                            self.tts,
+                            latency,
+                            thinking_proc=thinking_proc,
                             ui_bus=self.ui_bus,
                         )
                 except Exception:
@@ -319,6 +363,7 @@ class AssistantFSM:
 
         # Resume any stream that pause() suspended on the wake-word trigger.
         from src.tools.player import resume
+
         resume()
 
         return State.IDLE, {}

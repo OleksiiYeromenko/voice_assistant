@@ -12,18 +12,22 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from src.config import load_config
+from src.llm.backends import (
+    ClaudeBackend,
+    GeminiBackend,
+    LlamaCppBackend,
+    OllamaBackend,
+    ToolCall,
+    check_ollama_connectivity,
+)
 from src.memory import MarkdownMemoryStore
 from src.monitor import LatencyRecord, Timer, snapshot
-from src.stt.engine import STTEngine
-from src.tts.engine import TTSEngine
-from src.llm.backends import (
-    OllamaBackend, LlamaCppBackend, ClaudeBackend, GeminiBackend,
-    ToolCall, check_ollama_connectivity,
-)
 from src.router.router import ModelRouter, RemoteAvailabilityMonitor
-from src.tools.executor import ALL_TOOLS, execute_tool, register_tool
+from src.stt.engine import STTEngine
+from src.tools.executor import execute_tool, register_tool
 from src.tools.player import init_player
 from src.tools.timers import register_alert_callback
+from src.tts.engine import TTSEngine
 
 log = logging.getLogger(__name__)
 
@@ -72,9 +76,7 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
         log.info(f"GPU PC Ollama reachable at {remote_url} — using as default")
         default_key = "remote"
     else:
-        log.warning(
-            f"GPU PC Ollama not reachable at {remote_url} — falling back to localhost"
-        )
+        log.warning(f"GPU PC Ollama not reachable at {remote_url} — falling back to localhost")
         default_key = "local"
 
     # Cloud backends — optional, fail gracefully
@@ -150,7 +152,8 @@ def run_llm_with_tools(
         # Stream tokens through TTS — speaks complete sentences as they arrive.
         # pre_proc (thinking sound) is passed only on the first round; cleared inside stream_speak.
         speaking_emitted = False
-        for text in tts.stream_speak(token_gen(), latency=latency, pre_proc=thinking_proc if round_num == 0 else None):
+        pre_proc = thinking_proc if round_num == 0 else None
+        for text in tts.stream_speak(token_gen(), latency=latency, pre_proc=pre_proc):
             if not speaking_emitted and text.strip() and ui_bus is not None:
                 ui_bus.state_changed.emit("SPEAKING")
                 speaking_emitted = True
@@ -167,14 +170,16 @@ def run_llm_with_tools(
 
         # If tool calls were issued, execute them and loop
         if tool_calls:
-            messages.append({
-                "role": "assistant",
-                "content": text_buffer or "",
-                "tool_calls": [
-                    {"function": {"name": tc.name, "arguments": tc.arguments}}
-                    for tc in tool_calls
-                ],
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": text_buffer or "",
+                    "tool_calls": [
+                        {"function": {"name": tc.name, "arguments": tc.arguments}}
+                        for tc in tool_calls
+                    ],
+                }
+            )
 
             for tc in tool_calls:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
@@ -184,11 +189,13 @@ def run_llm_with_tools(
                 result = execute_tool(tc.name, tc.arguments)
                 if ui_bus is not None:
                     ui_bus.tool_done.emit(tc.name, str(result)[:80])
-                messages.append({
-                    "role": "tool",
-                    "tool_name": tc.name,
-                    "content": result,
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_name": tc.name,
+                        "content": result,
+                    }
+                )
             continue
 
         # No tool calls — this is the final text response
@@ -308,9 +315,9 @@ def _summarize_in_background(backend, messages, memory, session_id):
             for line in raw_text.strip().splitlines():
                 line = line.strip()
                 if line.lower().startswith("summary:"):
-                    summary_line = line[len("summary:"):].strip()
+                    summary_line = line[len("summary:") :].strip()
                 elif line.lower().startswith("topics:"):
-                    topics_line = line[len("topics:"):].strip()
+                    topics_line = line[len("topics:") :].strip()
 
             if not summary_line:
                 summary_line = raw_text.strip().splitlines()[0].strip()
@@ -343,25 +350,25 @@ def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_tim
 
     # Capture conversation snapshot BEFORE clearing
     should_summarize = (
-        cfg.get("session", {}).get("auto_summarize", True)
-        and memory
-        and len(conversation) >= 4
+        cfg.get("session", {}).get("auto_summarize", True) and memory and len(conversation) >= 4
     )
     summary_messages = None
     if should_summarize:
         backend = backends.get("local") or backends.get("remote")
         if backend:
             summary_messages = list(conversation[-10:])
-            summary_messages.append({
-                "role": "user",
-                "content": (
-                    "Summarize this conversation in one sentence. "
-                    "Then on a second line, list 2-5 topic keywords separated by commas.\n"
-                    "Format:\n"
-                    "Summary: <one sentence>\n"
-                    "Topics: <keyword1, keyword2, ...>"
-                ),
-            })
+            summary_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Summarize this conversation in one sentence. "
+                        "Then on a second line, list 2-5 topic keywords separated by commas.\n"
+                        "Format:\n"
+                        "Summary: <one sentence>\n"
+                        "Topics: <keyword1, keyword2, ...>"
+                    ),
+                }
+            )
 
     # Close current session immediately (no summary yet) and open a fresh one
     old_session_id = session_id
@@ -473,6 +480,7 @@ def assistant_loop(cfg: dict):
     if use_wake_word:
         try:
             from src.wake_word.detector import WakeWordDetector
+
             ww_cfg = cfg["wake_word"]
             wake_detector = WakeWordDetector(
                 model=ww_cfg["model"],
@@ -499,6 +507,7 @@ def assistant_loop(cfg: dict):
 
     if "--ui" in sys.argv:
         from src.ui.app import run_ui
+
         sys.exit(run_ui(fsm))
     else:
         fsm.run()
@@ -515,10 +524,12 @@ def _setup_logging():
 
     # Console handler — short timestamps for journald / interactive use
     console = logging.StreamHandler()
-    console.setFormatter(logging.Formatter(
-        "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        datefmt="%H:%M:%S",
-    ))
+    console.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
 
     # Rotating file handler — 5 MB × 5 files = ~25 MB cap, survives reboots
     file_handler = RotatingFileHandler(
