@@ -31,7 +31,10 @@ log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _mpv_proc: subprocess.Popen | None = None
 _current_station: str | None = None
+_current_url: str | None = None          # URL of the active/last stream
 _was_playing_before_pause: bool = False
+_paused_url: str | None = None           # saved URL so resume() can restart
+_paused_station: str | None = None       # saved station name for display
 
 _ipc_path: str = "/tmp/va-mpv.sock"
 _radio_browser_base: str = "https://de1.api.radio-browser.info"
@@ -106,10 +109,12 @@ def play_radio(query: str) -> str:
 def stop_playback() -> str:
     """Stop the currently playing stream, if any."""
     with _lock:
-        if _mpv_proc is None:
+        # _mpv_proc may be None if pause() already killed mpv to free the device,
+        # but _was_playing_before_pause signals that a stream was active.
+        if _mpv_proc is None and not _was_playing_before_pause:
             return "Nothing is playing."
-        name = _current_station or "playback"
-        _stop_locked()
+        name = _current_station or _paused_station or "playback"
+        _stop_locked()  # clears _paused_url / _paused_station too
         return f"Stopped {name}."
 
 
@@ -148,35 +153,54 @@ def is_playing() -> bool:
 
 
 def pause() -> None:
-    """Pause the current stream if one is playing. No-op otherwise."""
-    global _was_playing_before_pause
+    """Kill the current stream to release the audio device; save state for resume().
+
+    IPC-pausing mpv does not reliably close the exclusive ALSA device, so we
+    terminate the process outright and restart it in resume() once TTS is done.
+    """
+    global _was_playing_before_pause, _paused_url, _paused_station
     with _lock:
         if _mpv_proc is None or _mpv_proc.poll() is not None:
-            _was_playing_before_pause = False
             return
-        try:
-            _ipc_command_locked(["set_property", "pause", True])
+        # Read stream info before _stop_locked() clears it.
+        url = _current_url
+        station = _current_station
+        _stop_locked()
+        if url:
             _was_playing_before_pause = True
-        except Exception as e:
-            log.warning(f"Pause IPC failed: {e}")
-            _was_playing_before_pause = False
+            _paused_url = url
+            _paused_station = station
 
 
 def resume() -> None:
-    """Resume a stream that we previously paused. No-op otherwise."""
-    global _was_playing_before_pause
+    """Resume the stream that pause() suspended.
+
+    Two cases:
+    - pause() killed a running stream → restart mpv from the saved URL.
+    - play_radio() started mpv with --pause this turn → just IPC-unpause it.
+    """
+    global _was_playing_before_pause, _paused_url, _paused_station
     with _lock:
         if not _was_playing_before_pause:
             return
-        if _mpv_proc is None or _mpv_proc.poll() is not None:
-            _was_playing_before_pause = False
-            return
-        try:
-            _ipc_command_locked(["set_property", "pause", False])
-        except Exception as e:
-            log.warning(f"Resume IPC failed: {e}")
-        finally:
-            _was_playing_before_pause = False
+        _was_playing_before_pause = False
+
+        if _paused_url is not None:
+            # Restart the stream that was killed in pause().
+            url = _paused_url
+            station = _paused_station or "radio"
+            _paused_url = None
+            _paused_station = None
+            try:
+                _start_mpv_locked(url, station, start_paused=False)
+            except Exception as e:
+                log.warning(f"Resume (restart) failed: {e}")
+        elif _mpv_proc is not None and _mpv_proc.poll() is None:
+            # mpv is alive but started with --pause (play_radio this turn); just unpause.
+            try:
+                _ipc_command_locked(["set_property", "pause", False])
+            except Exception as e:
+                log.warning(f"Resume IPC failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -220,12 +244,16 @@ def _search_radio_browser(query: str) -> list[dict]:
     return results
 
 
-def _start_mpv_locked(url: str, station_name: str) -> None:
+def _start_mpv_locked(url: str, station_name: str, start_paused: bool = True) -> None:
     """Launch mpv and wait briefly for the IPC socket to appear.
 
     Caller must hold ``_lock``. Raises on failure (mpv dies or socket never appears).
+
+    start_paused=True  → started with --pause so TTS can use the audio device in the
+                         same turn; resume() will unpause at end of THINKING.
+    start_paused=False → starts playing immediately (used by resume() after kill-pause).
     """
-    global _mpv_proc, _current_station, _was_playing_before_pause
+    global _mpv_proc, _current_station, _current_url, _was_playing_before_pause
 
     # Stale socket from a previously killed run would prevent a clean bind.
     try:
@@ -234,26 +262,23 @@ def _start_mpv_locked(url: str, station_name: str) -> None:
     except OSError:
         pass
 
-    # `plughw:` is an exclusive ALSA device — holding it would block the TTS
-    # `aplay` that speaks the LLM's confirmation in this same turn. Start paused
-    # with `--audio-stream-silence=no` so mpv keeps the device closed until the
-    # state-machine's resume() hook fires at the end of THINKING.
     cmd = [
         "mpv",
         "--no-video",
         "--really-quiet",
         "--idle=no",
         "--no-terminal",
-        "--pause",
         "--audio-stream-silence=no",
         f"--input-ipc-server={_ipc_path}",
         f"--volume={_preferred_volume}",
     ]
+    if start_paused:
+        cmd.append("--pause")
     if _audio_device:
         cmd.append(f"--audio-device=alsa/{_audio_device}")
     cmd.append(url)
 
-    log.info(f"Starting mpv for '{station_name}': {url}")
+    log.info(f"Starting mpv for '{station_name}' (paused={start_paused}): {url}")
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -280,19 +305,23 @@ def _start_mpv_locked(url: str, station_name: str) -> None:
 
     _mpv_proc = proc
     _current_station = station_name
-    # mpv was started with --pause; mark it so the state machine's resume()
-    # hook (fired at the end of THINKING, after TTS has spoken) unpauses it.
-    _was_playing_before_pause = True
+    _current_url = url
+    # When started paused, signal resume() to unpause at end of THINKING.
+    _was_playing_before_pause = start_paused
 
 
 def _stop_locked() -> None:
     """Terminate the running player. Caller must hold ``_lock``."""
-    global _mpv_proc, _current_station, _was_playing_before_pause
+    global _mpv_proc, _current_station, _current_url, _was_playing_before_pause
+    global _paused_url, _paused_station
 
     proc = _mpv_proc
     _mpv_proc = None
     _current_station = None
+    _current_url = None
     _was_playing_before_pause = False
+    _paused_url = None
+    _paused_station = None
 
     if proc is None:
         return

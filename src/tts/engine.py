@@ -331,12 +331,17 @@ class TTSEngine:
         if remaining:
             log.debug(f"TTS remainder: '{remaining}'")
             wav_data, _ = self.synthesize(remaining)
-            # In case no sentence boundary was hit, still wait for thinking sound
             if pre_proc is not None:
                 self._wait_for_pre(pre_proc)
                 pre_proc = None
             self._wait_for_playback(play_proc)
             play_proc = self._start_playback(wav_data)
+
+        # If no text was produced at all (e.g. model went straight to a tool call),
+        # still wait for the thinking sound so it doesn't overlap with the next
+        # round's TTS, which shares the same exclusive audio device.
+        if pre_proc is not None:
+            self._wait_for_pre(pre_proc)
 
         # Wait for final playback to complete
         self._wait_for_playback(play_proc)
