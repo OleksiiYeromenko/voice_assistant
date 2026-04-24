@@ -129,11 +129,16 @@ def run_llm_with_tools(
         text_buffer = ""
         printed_prefix = False
 
+        # After tool calls have been made, don't send tools again — the model
+        # only needs to produce a spoken confirmation, and omitting tools prevents
+        # it returning a degenerate empty response instead of text.
+        stream_tools = tools if not tools_used else None
+
         def token_gen():
             """Yield visible text tokens; silently collect tool_calls + thinking."""
             first_token_seen = False
             with Timer() as t:
-                for chunk in backend.stream(messages, tools=tools, system=system):
+                for chunk in backend.stream(messages, tools=stream_tools, system=system):
                     if chunk.text:
                         if not first_token_seen:
                             first_token_seen = True

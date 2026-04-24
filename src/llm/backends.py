@@ -391,10 +391,12 @@ class LlamaCppBackend:
             "messages": full_messages,
             "stream": True,
             "temperature": self._temperature,
-            # Disable thinking for qwen3 thinking models.
-            # /no_think suffix only works with Ollama, not llama.cpp.
-            # Per-request API (has known bugs with some builds — most reliable
-            # method is --reasoning-budget 0 at server startup).
+            # Disable thinking mode for Gemma 4 (and other thinking-capable models).
+            # The Jinja template checks `enable_thinking` to inject <|think|>;
+            # setting it false prevents that token and keeps inference fast.
+            # Also set thinking_budget_tokens=0 as belt-and-suspenders for builds
+            # that support the per-request reasoning budget API.
+            # Most reliable method: start llama-server with --reasoning-budget 0.
             "chat_template_kwargs": {"enable_thinking": False},
             "thinking_budget_tokens": 0,
         }

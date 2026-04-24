@@ -183,11 +183,7 @@ PLAY_RADIO_TOOL = {
     "type": "function",
     "function": {
         "name": "play_radio",
-        "description": (
-            "Play an internet radio station by name, genre, or country"
-            " (e.g. 'jazz', 'BBC Radio 1', 'classical German')."
-            " Use when the user asks to play music or radio."
-        ),
+        "description": "Play an internet radio station by name, genre, or country (e.g. 'jazz', 'BBC Radio 1').",  # noqa: E501
         "parameters": {
             "type": "object",
             "required": ["query"],
@@ -204,8 +200,8 @@ PLAY_RADIO_TOOL = {
 STOP_PLAYBACK_TOOL = {
     "type": "function",
     "function": {
-        "name": "stop_playback",
-        "description": "Stop radio/music playback. Call this whenever the user asks to stop, pause, or turn off music — even if you are unsure whether something is playing. Safe to call when nothing is playing.",
+        "name": "stop_radio",
+        "description": "Stop radio or music playback. Safe to call when nothing is playing.",
         "parameters": {"type": "object", "required": [], "properties": {}},
     },
 }
@@ -570,7 +566,7 @@ _TOOL_FUNCTIONS: dict[str, callable] = {
     "set_timer": set_timer,
     "cancel_timer": cancel_timer,
     "play_radio": play_radio,
-    "stop_playback": stop_playback,
+    "stop_radio": stop_playback,
     "set_volume": set_volume,
 }
 

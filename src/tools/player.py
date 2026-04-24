@@ -92,7 +92,13 @@ def init_player(cfg: dict) -> None:
 
 
 def play_radio(query: str) -> str:
-    """Search Radio Browser for ``query`` and stream the top result via mpv."""
+    """Search Radio Browser for ``query`` and queue the top result for playback.
+
+    Actual playback starts after TTS finishes (via resume()), which keeps the
+    audio device free so aplay can speak the confirmation without "device busy".
+    """
+    global _was_playing_before_pause, _paused_url, _paused_station
+
     query = (query or "").strip()
     if not query:
         return "I need a station name or genre to play."
@@ -106,27 +112,28 @@ def play_radio(query: str) -> str:
     if not stations:
         return f"No stations found for '{query}'."
 
-    started_name: str | None = None
-    last_err: Exception | None = None
-    with _lock:
-        _stop_locked()  # stop anything currently playing before starting a new station
-        for s in stations:
-            url = s.get("url_resolved") or s.get("url")
-            name = s.get("name", "").strip() or query
-            if not url:
-                continue
-            try:
-                _start_mpv_locked(url, name)
-                started_name = name
-                break
-            except Exception as e:
-                last_err = e
-                log.warning(f"mpv failed for station '{name}': {e}")
+    chosen_name: str | None = None
+    chosen_url: str | None = None
+    for s in stations:
+        url = s.get("url_resolved") or s.get("url")
+        name = s.get("name", "").strip() or query
+        if url:
+            chosen_name = name
+            chosen_url = url
+            break
 
-    if started_name is not None:
-        _notify_radio(started_name)
-        return f"Playing {started_name}."
-    return f"Couldn't start any station for '{query}'" + (f": {last_err}." if last_err else ".")
+    if chosen_name is None:
+        return f"No playable station found for '{query}'."
+
+    with _lock:
+        _stop_locked()  # stop anything currently playing
+        # Queue for deferred playback — resume() fires at end of THINKING after TTS.
+        _was_playing_before_pause = True
+        _paused_url = chosen_url
+        _paused_station = chosen_name
+
+    log.info(f"Queued radio station '{chosen_name}' for post-TTS playback: {chosen_url}")
+    return f"Playing {chosen_name}."
 
 
 def stop_playback() -> str:
@@ -176,6 +183,14 @@ def is_playing() -> bool:
         return _mpv_proc is not None and _mpv_proc.poll() is None
 
 
+def get_radio_status() -> dict:
+    """Return {"station": str | None, "active": bool} for context injection."""
+    with _lock:
+        station = _current_station or _paused_station
+        active = station is not None and (_mpv_proc is not None or _was_playing_before_pause)
+    return {"station": station, "active": active}
+
+
 def pause() -> None:
     """Kill the current stream to release the audio device; save state for resume().
 
@@ -203,11 +218,12 @@ def pause() -> None:
 
 
 def resume() -> None:
-    """Resume the stream that pause() suspended.
+    """Start or resume a stream after TTS has finished.
 
     Two cases:
-    - pause() killed a running stream → restart mpv from the saved URL.
-    - play_radio() started mpv with --pause this turn → just IPC-unpause it.
+    - pause() killed a running stream, or play_radio() queued a new URL →
+      start mpv unpaused from _paused_url.
+    - mpv is alive but paused via IPC (legacy path) → send unpause command.
     """
     global _was_playing_before_pause, _paused_url, _paused_station
     resumed_station: str | None = None
