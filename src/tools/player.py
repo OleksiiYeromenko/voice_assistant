@@ -36,12 +36,31 @@ _was_playing_before_pause: bool = False
 _paused_url: str | None = None           # saved URL so resume() can restart
 _paused_station: str | None = None       # saved station name for display
 
+_radio_change_callback = None   # (station_name: str) → None; "" means stopped
 _ipc_path: str = "/tmp/va-mpv.sock"
 _radio_browser_base: str = "https://de1.api.radio-browser.info"
 _search_limit: int = 5
 _request_timeout_s: float = 5.0
 _audio_device: str | None = None  # e.g. "plughw:2,0" (passed as alsa/<device>)
 _preferred_volume: int = 70
+
+
+def register_radio_callback(cb) -> None:
+    """Register a callable(station_name: str) notified on play/stop.
+
+    Called with the station name when playback starts, "" when it stops.
+    Not called during pause/resume cycles so the UI doesn't flicker during TTS.
+    """
+    global _radio_change_callback
+    _radio_change_callback = cb
+
+
+def _notify_radio(station: str) -> None:
+    if _radio_change_callback is not None:
+        try:
+            _radio_change_callback(station)
+        except Exception:
+            pass
 
 
 def init_player(cfg: dict) -> None:
@@ -87,9 +106,10 @@ def play_radio(query: str) -> str:
     if not stations:
         return f"No stations found for '{query}'."
 
+    started_name: str | None = None
+    last_err: Exception | None = None
     with _lock:
         _stop_locked()  # stop anything currently playing before starting a new station
-        last_err: Exception | None = None
         for s in stations:
             url = s.get("url_resolved") or s.get("url")
             name = s.get("name", "").strip() or query
@@ -97,12 +117,15 @@ def play_radio(query: str) -> str:
                 continue
             try:
                 _start_mpv_locked(url, name)
-                return f"Playing {name}."
+                started_name = name
+                break
             except Exception as e:
                 last_err = e
                 log.warning(f"mpv failed for station '{name}': {e}")
-                continue
 
+    if started_name is not None:
+        _notify_radio(started_name)
+        return f"Playing {started_name}."
     return f"Couldn't start any station for '{query}'" + (f": {last_err}." if last_err else ".")
 
 
@@ -115,7 +138,8 @@ def stop_playback() -> str:
             return "Nothing is playing."
         name = _current_station or _paused_station or "playback"
         _stop_locked()  # clears _paused_url / _paused_station too
-        return f"Stopped {name}."
+    _notify_radio("")
+    return f"Stopped {name}."
 
 
 def set_volume(level: int) -> str:
@@ -180,6 +204,7 @@ def resume() -> None:
     - play_radio() started mpv with --pause this turn → just IPC-unpause it.
     """
     global _was_playing_before_pause, _paused_url, _paused_station
+    resumed_station: str | None = None
     with _lock:
         if not _was_playing_before_pause:
             return
@@ -193,14 +218,18 @@ def resume() -> None:
             _paused_station = None
             try:
                 _start_mpv_locked(url, station, start_paused=False)
+                resumed_station = station
             except Exception as e:
                 log.warning(f"Resume (restart) failed: {e}")
         elif _mpv_proc is not None and _mpv_proc.poll() is None:
             # mpv is alive but started with --pause (play_radio this turn); just unpause.
             try:
                 _ipc_command_locked(["set_property", "pause", False])
+                resumed_station = _current_station
             except Exception as e:
                 log.warning(f"Resume IPC failed: {e}")
+    if resumed_station:
+        _notify_radio(resumed_station)
 
 
 # ---------------------------------------------------------------------------

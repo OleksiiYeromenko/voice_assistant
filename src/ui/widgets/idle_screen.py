@@ -65,6 +65,12 @@ class IdleScreen(QWidget):
             f"color: {idle_fg}; font-size: 18px; font-weight: bold;"
         )
 
+        self._radio_label = QLabel("", self)
+        self._radio_label.setStyleSheet(
+            "color: #26C6DA; font-size: 18px; font-family: 'DejaVu Sans';"
+        )
+        self._radio_label.setVisible(False)
+
         self._temp_label = QLabel("", self)
         self._temp_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -93,6 +99,7 @@ class IdleScreen(QWidget):
         )
 
         bottom_layout.addWidget(self._state_label)
+        bottom_layout.addWidget(self._radio_label)
         bottom_layout.addStretch()
         bottom_layout.addWidget(self._temp_label)
         bottom_layout.addWidget(self._cpu_label)
@@ -140,6 +147,14 @@ class IdleScreen(QWidget):
             f"color: {ram_color}; font-size: 18px;"
             f"font-family: 'DejaVu Sans Mono';"
         )
+
+    def on_radio_changed(self, station: str):
+        """Show or hide the radio indicator in the bottom strip."""
+        if station:
+            self._radio_label.setText(f"♪ {station}")
+            self._radio_label.setVisible(True)
+        else:
+            self._radio_label.setVisible(False)
 
     def on_state_changed(self, state_name: str):
         """Update bottom strip state pill (e.g. SESSION_CHECK before going active)."""

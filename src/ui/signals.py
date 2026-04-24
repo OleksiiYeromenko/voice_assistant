@@ -42,5 +42,8 @@ class UIEventBus(QObject):
     # Conversation turn counter (increments after each assistant response)
     turn_count_updated = pyqtSignal(int)
 
+    # Radio playback changed: station name when playing, "" when stopped
+    radio_changed = pyqtSignal(str)
+
     # FSM has exited — time to close the window
     shutdown_requested = pyqtSignal()

@@ -141,6 +141,20 @@ class StateBar(QWidget):
         self._pill = StatePill(self)
         self._badge = ModelBadge(self)
 
+        self._radio_badge = QLabel(self)
+        self._radio_badge.setFixedHeight(38)
+        self._radio_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._radio_badge.setStyleSheet(
+            "QLabel {"
+            "  background-color: #004D5A;"
+            "  color: #26C6DA;"
+            "  border-radius: 14px;"
+            "  padding: 4px 14px;"
+            "  font-size: 18px;"
+            "}"
+        )
+        self._radio_badge.setVisible(False)
+
         self._clock = QLabel(self)
         self._clock.setStyleSheet(
             f"color: {theme.TEXT_SECONDARY}; font-family: 'DejaVu Sans Mono'; font-size: 20px;"
@@ -150,6 +164,7 @@ class StateBar(QWidget):
 
         layout.addWidget(self._pill)
         layout.addWidget(self._badge)
+        layout.addWidget(self._radio_badge)
         layout.addStretch()
         layout.addWidget(self._clock)
 
@@ -163,12 +178,21 @@ class StateBar(QWidget):
     def _connect_signals(self, bus):
         bus.state_changed.connect(self._on_state_changed)
         bus.model_changed.connect(self._on_model_changed)
+        bus.radio_changed.connect(self._on_radio_changed)
 
     def _on_state_changed(self, state_name: str):
         self._pill.set_state(state_name)
 
     def _on_model_changed(self, backend_key: str, model_name: str):
         self._badge.set_model(backend_key, model_name)
+
+    def _on_radio_changed(self, station: str):
+        if station:
+            name = station[:24]
+            self._radio_badge.setText(f"♪ {name}")
+            self._radio_badge.setVisible(True)
+        else:
+            self._radio_badge.setVisible(False)
 
     def _update_clock(self):
         self._clock.setText(datetime.now().strftime("%H:%M"))

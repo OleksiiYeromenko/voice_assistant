@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QThread, QTimer, Qt
+from PyQt6.QtCore import QEvent, Qt, QThread, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from src.tools.player import register_radio_callback
 from src.ui.signals import UIEventBus
 from src.ui.theme import MAIN_STYLESHEET
 from src.ui.widgets.chat_view import ChatView
@@ -183,6 +184,7 @@ class MainWindow(QMainWindow):
         bus.state_changed.connect(self._on_state_changed)
         bus.resource_updated.connect(self._on_resource_updated)
         bus.shutdown_requested.connect(self._on_shutdown)
+        bus.radio_changed.connect(self._idle_screen.on_radio_changed)
 
         # ── Resource polling ──────────────────────────────────────────────────
         self._res_timer = QTimer(self)
@@ -290,6 +292,8 @@ def run_ui(fsm) -> int:
 
     bus = UIEventBus()
     fsm.ui_bus = bus
+
+    register_radio_callback(lambda station: bus.radio_changed.emit(station))
 
     display_cfg = {}
     try:
