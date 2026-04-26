@@ -11,7 +11,11 @@ afterwards so that the ALSA device is free for the STT engine to record.
 import logging
 import subprocess
 import threading
+import wave
+from collections import deque
 from collections.abc import Generator
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 
@@ -23,6 +27,7 @@ RATE = 16000
 CHANNELS = 1
 CHUNK_SAMPLES = 1280  # 80 ms at 16 kHz — openWakeWord's native frame size
 CHUNK_BYTES = CHUNK_SAMPLES * 2  # int16 = 2 bytes per sample
+PREBUFFER_CHUNKS = 38  # 3 seconds of audio (38 × 80 ms)
 
 
 def _kill_proc(proc: subprocess.Popen):
@@ -43,6 +48,7 @@ class WakeWordDetector:
         model: str = "hey_jarvis",
         threshold: float = 0.7,
         alsa_device: str | None = None,
+        record_detections: bool = False,
     ):
         import openwakeword
         from openwakeword.model import Model
@@ -56,7 +62,25 @@ class WakeWordDetector:
         self.threshold = threshold
         self._alsa_device = alsa_device
         self.oww = Model(wakeword_models=[model])
+
+        self._record_detections = record_detections
+        if record_detections:
+            self._capture_dir = Path("data/wake_captures")
+            for sub in ("raw", "false_positives", "true_positives"):
+                (self._capture_dir / sub).mkdir(parents=True, exist_ok=True)
+            log.info(f"Wake capture recording enabled → {self._capture_dir}")
+
         log.info(f"Wake word detector ready: '{model}' (threshold={threshold})")
+
+    def _save_capture(self, ring: deque, score: float) -> None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = self._capture_dir / "raw" / f"{ts}_{score:.3f}.wav"
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(2)
+            wf.setframerate(RATE)
+            wf.writeframes(b"".join(ring))
+        log.debug(f"Saved wake capture: {path.name}")
 
     def _ensure_alsa_device(self):
         if self._alsa_device is None:
@@ -149,6 +173,7 @@ class WakeWordDetector:
         log.info(f"Listening for wake word at {RATE} Hz via {self._alsa_device} ...")
 
         last_heartbeat = time.monotonic()
+        ring: deque[bytes] = deque(maxlen=PREBUFFER_CHUNKS)
 
         try:
             while True:
@@ -180,6 +205,7 @@ class WakeWordDetector:
                             log.warning("arecord stream ended unexpectedly")
                             break
 
+                        ring.append(data)
                         audio_16k = np.frombuffer(data, dtype=np.int16)
                         prediction = self.oww.predict(audio_16k)
 
@@ -188,6 +214,8 @@ class WakeWordDetector:
                                 log.info(f"Wake word '{model_name}': {score:.3f}")
                                 # Stop arecord BEFORE yielding so STT can use the device
                                 _kill_proc(proc)
+                                if self._record_detections:
+                                    self._save_capture(ring, score)
                                 self.oww.reset()
                                 yield score
                                 detected = True
