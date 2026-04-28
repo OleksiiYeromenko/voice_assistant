@@ -106,6 +106,45 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
 # ---------------------------------------------------------------------------
 # LLM streaming with tool calling
 # ---------------------------------------------------------------------------
+def _create_token_gen(
+    backend,
+    messages: list[dict],
+    tools: list[dict] | None,
+    system: str,
+    latency: LatencyRecord,
+    tool_calls_list: list | None = None,
+    ui_bus=None,
+    is_first_round: bool = True,
+):
+    """Factory for token generators with shared latency/UI tracking.
+
+    Returns a generator that yields text tokens and collects tool_calls
+    (if tool_calls_list is provided). Updates latency record with timing info.
+    """
+
+    def token_gen():
+        first_token_seen = False
+        with Timer() as t:
+            for chunk in backend.stream(messages, tools=tools, system=system):
+                if chunk.text:
+                    if not first_token_seen:
+                        first_token_seen = True
+                        if is_first_round:
+                            latency.llm_first_token_ms = t.mark()
+                    latency.token_count += 1
+                    if ui_bus is not None:
+                        ui_bus.text_chunk.emit(chunk.text)
+                    yield chunk.text
+                if chunk.thinking:
+                    log.debug(f"[think] {chunk.thinking}")
+                if tool_calls_list is not None:
+                    tool_calls_list.extend(chunk.tool_calls)
+        latency.llm_ms += t.elapsed_ms
+        latency.model_used = backend.name
+
+    return token_gen
+
+
 def run_llm_with_tools(
     backend,
     messages: list[dict],
@@ -134,25 +173,16 @@ def run_llm_with_tools(
         # it returning a degenerate empty response instead of text.
         stream_tools = tools if not tools_used else None
 
-        def token_gen():
-            """Yield visible text tokens; silently collect tool_calls + thinking."""
-            first_token_seen = False
-            with Timer() as t:
-                for chunk in backend.stream(messages, tools=stream_tools, system=system):
-                    if chunk.text:
-                        if not first_token_seen:
-                            first_token_seen = True
-                            if round_num == 0:
-                                latency.llm_first_token_ms = t.mark()
-                        latency.token_count += 1
-                        if ui_bus is not None:
-                            ui_bus.text_chunk.emit(chunk.text)
-                        yield chunk.text
-                    if chunk.thinking:
-                        log.debug(f"[think] {chunk.thinking}")
-                    tool_calls.extend(chunk.tool_calls)
-            latency.llm_ms += t.elapsed_ms
-            latency.model_used = backend.name
+        token_gen = _create_token_gen(
+            backend,
+            messages,
+            stream_tools,
+            system,
+            latency,
+            tool_calls_list=tool_calls,
+            ui_bus=ui_bus,
+            is_first_round=(round_num == 0),
+        )
 
         # Stream tokens through TTS — speaks complete sentences as they arrive.
         # pre_proc (thinking sound) is passed only on the first round; cleared inside stream_speak.
@@ -217,17 +247,16 @@ def run_llm_with_tools(
         text_buffer = ""
         printed_prefix = False
 
-        def final_token_gen():
-            with Timer() as t:
-                for chunk in backend.stream(messages, tools=None, system=system):
-                    if chunk.text:
-                        latency.token_count += 1
-                        if ui_bus is not None:
-                            ui_bus.text_chunk.emit(chunk.text)
-                        yield chunk.text
-                    if chunk.thinking:
-                        log.debug(f"[think] {chunk.thinking}")
-            latency.llm_ms += t.elapsed_ms
+        final_token_gen = _create_token_gen(
+            backend,
+            messages,
+            None,  # no tools on fallback
+            system,
+            latency,
+            tool_calls_list=None,
+            ui_bus=ui_bus,
+            is_first_round=False,  # not first round anymore
+        )
 
         speaking_emitted = False
         for text in tts.stream_speak(final_token_gen(), latency=latency):
@@ -266,22 +295,17 @@ def run_streaming_llm(
     ui_bus is optional; when provided, streaming tokens are emitted to the UI.
     """
     full_text = ""
-    first_token = True
 
-    def token_gen():
-        nonlocal first_token, latency
-        with Timer() as t:
-            for chunk in backend.stream(messages, tools=tools, system=system):
-                if first_token and chunk.text:
-                    latency.llm_first_token_ms = t.mark()
-                    first_token = False
-                if chunk.text:
-                    latency.token_count += 1
-                    if ui_bus is not None:
-                        ui_bus.text_chunk.emit(chunk.text)
-                    yield chunk.text
-        latency.llm_ms = t.elapsed_ms
-        latency.model_used = backend.name
+    token_gen = _create_token_gen(
+        backend,
+        messages,
+        tools,
+        system,
+        latency,
+        tool_calls_list=None,
+        ui_bus=ui_bus,
+        is_first_round=True,
+    )
 
     speaking_emitted = False
     for text in tts.stream_speak(token_gen(), latency=latency, pre_proc=thinking_proc):
