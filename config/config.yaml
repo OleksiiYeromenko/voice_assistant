@@ -5,7 +5,7 @@
 wake_word:
   # Pre-trained models: "hey_jarvis", "alexa", "hey_mycroft", "timer", etc.
   # Or path to custom .onnx model, e.g. "./models/my_wakeword.onnx"
-  model: "./models/hey_Poon-dyk_acc_0.81_recall_0.62_fp_2.7.onnx"
+  model: "./models/hey_Poon-dyk_acc_0.8_rec_0.6_fp_1.32.onnx"
   threshold: 0.85         # Detection confidence (0.0-1.0) — tune for your custom model
   record_detections: true  # Save 3s pre-detection WAV to data/wake_captures/raw/ for FP collection
 
