@@ -2,13 +2,14 @@
 
 import os
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 _DEFAULT_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
 
 
-def _apply_env_override(cfg: dict, parts: list[str], val: str):
+def _apply_env_override(cfg: dict[str, Any], parts: list[str], val: str) -> None:
     """Walk config tree, greedily matching existing keys with underscores.
 
     For VA_LLM_LOCAL_THINK_MODEL, tries "local_think" before "local"+"think"
@@ -34,7 +35,7 @@ def _apply_env_override(cfg: dict, parts: list[str], val: str):
     d[leaf] = val
 
 
-def load_config(path: str | Path | None = None) -> dict:
+def load_config(path: str | Path | None = None) -> dict[str, Any]:
     """Load config from YAML. Environment variables override nested keys via VA_ prefix.
 
     Example: VA_LLM_LOCAL_MODEL=qwen3:1.7b overrides llm.local.model

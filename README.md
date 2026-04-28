@@ -49,25 +49,94 @@ The assistant runs as a finite state machine with explicit states and transition
 | INTERRUPTED | TTS stopped, clean up | Releasing → free |
 | SHUTDOWN | Close session, exit | None |
 
+## Prerequisites
+
+- **Python 3.13+** — Required by the project
+- **`uv` package manager** — Fast, zero-config Python package manager ([install](https://docs.astral.sh/uv/getting-started/installation/))
+- **System packages** (Ubuntu/Debian):
+  ```bash
+  sudo apt-get install alsa-utils espeak-ng mpv
+  ```
+- **Ollama** (local inference) or API keys for cloud models:
+  - **Local**: [Ollama](https://ollama.ai) running on localhost:11434 or remote GPU PC
+  - **Claude**: Set `ANTHROPIC_API_KEY` environment variable
+  - **Gemini**: Set `GOOGLE_API_KEY` environment variable
+  - **Todoist** (optional): Set `TODOIST_API_TOKEN` for shopping list tool
+
+## Installation
+
+1. **Clone and setup:**
+   ```bash
+   git clone <repo-url>
+   cd voice_assistant
+   bash scripts/setup.sh
+   ```
+
+2. **Configure:**
+   - Edit `config/config.yaml` for your audio devices and model preferences
+   - Set API keys in `.env` (git-ignored):
+     ```bash
+     echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+     echo "GOOGLE_API_KEY=..." >> .env
+     ```
+
+3. **Test components:**
+   ```bash
+   uv run scripts/test_components.py all
+   ```
+
 ## Quick Start
 
 ```bash
-# One-time setup
-bash scripts/setup.sh
+# Full mode with wake word
+uv run python -m src.main
 
-# Set cloud API keys (optional)
-export ANTHROPIC_API_KEY="sk-ant-..."
-export GOOGLE_API_KEY="..."
+# Keyboard mode (press Enter to speak)
+uv run python -m src.main --no-wake
 
-# Test components individually
-uv run scripts/test_components.py weather
-uv run scripts/test_components.py llm
-uv run scripts/test_components.py all
+# Text-only mode (for testing)
+uv run python -m src.main --text
 
-# Run the assistant
-uv run python -m src.main --no-wake    # Keyboard mode (no wake word)
-uv run python -m src.main              # Full mode with wake word
+# With UI (PyQt6)
+uv run python -m src.main --ui
 ```
+
+## Development Setup
+
+To contribute or modify the code:
+
+1. **Install development dependencies:**
+   ```bash
+   uv pip install -e ".[dev]"
+   ```
+
+2. **Run linter:**
+   ```bash
+   uv run ruff check src/
+   uv run ruff format src/
+   ```
+
+3. **Run tests:**
+   ```bash
+   # Component tests
+   uv run scripts/test_components.py all
+   
+   # Specific component
+   uv run scripts/test_components.py weather
+   uv run scripts/test_components.py llm
+   ```
+
+4. **Debug with environment variables:**
+   ```bash
+   VA_LLM_LOCAL_MODEL=qwen3:1.7b uv run python -m src.main --no-wake
+   VA_STT_MODEL=tiny.en uv run python -m src.main --text
+   VA_WAKE_WORD_THRESHOLD=0.6 uv run python -m src.main
+   ```
+
+5. **View logs:**
+   ```bash
+   tail -f data/logs/assistant.log
+   ```
 
 ## Model Routing
 
