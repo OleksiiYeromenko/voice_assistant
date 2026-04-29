@@ -101,7 +101,7 @@ player:
 
 # --- Session ---
 session:
-  inactivity_timeout_s: 120  # 5 minutes — session ends after this gap
+  inactivity_timeout_s: 900  # 15 minutes — longer for cooking sessions
   auto_summarize: true       # Summarize conversation on session end
 
 # --- Display (UI mode only) ---

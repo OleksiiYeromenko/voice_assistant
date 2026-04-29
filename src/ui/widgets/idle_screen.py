@@ -3,22 +3,35 @@
 from datetime import datetime
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.ui import theme
+
+_RECIPE_STEP_FONT_SIZE = 36    # single-step display
+_RECIPE_ALL_FONT_SIZE = 22     # all-steps display (≤ 5 steps)
+_RECIPE_NUM_FONT_SIZE = 24     # "Step N of M" label
 
 
 class IdleScreen(QWidget):
     """Full-screen ambient display shown when the assistant is IDLE.
 
+    Center area uses a QStackedWidget:
+      Page 0 — clock + date (default)
+      Page 1 — recipe step display (Active Recipe)
+
     Layout (800×480):
       ┌─────────────────────────────────────┐
       │                                     │  ↑ flex spacer
-      │              18:25                  │  ← 120px clock
-      │         Tuesday, 4 March            │  ← 28px date
+      │         [clock or recipe step]      │  ← center (stacked)
       │                                     │  ↓ flex spacer
       ├─────────────────────────────────────┤
-      │  ● IDLE    47°C  CPU 12%  3.6GB RAM │  ← 40px bottom strip
+      │  ● IDLE    47°C  CPU 12%  3.6GB RAM │  ← 52px bottom strip
       └─────────────────────────────────────┘
     """
 
@@ -29,26 +42,56 @@ class IdleScreen(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # ── Center: clock + date ─────────────────────────────────────────────
-        center = QWidget(self)
-        center_layout = QVBoxLayout(center)
-        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center_layout.setSpacing(6)
+        # ── Center: stacked clock / recipe ───────────────────────────────────
+        self._center = QStackedWidget(self)
 
-        self._clock_label = QLabel(self)
+        # Page 0: clock + date
+        clock_panel = QWidget()
+        clock_layout = QVBoxLayout(clock_panel)
+        clock_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        clock_layout.setSpacing(6)
+
+        self._clock_label = QLabel()
         self._clock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._clock_label.setStyleSheet(
             f"color: {theme.TEXT_PRIMARY};font-size: {theme.IDLE_CLOCK_FONT_SIZE}px;"
         )
 
-        self._date_label = QLabel(self)
+        self._date_label = QLabel()
         self._date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._date_label.setStyleSheet(
             f"color: {theme.TEXT_MUTED}; font-size: {theme.IDLE_DATE_FONT_SIZE}px;"
         )
 
-        center_layout.addWidget(self._clock_label)
-        center_layout.addWidget(self._date_label)
+        clock_layout.addWidget(self._clock_label)
+        clock_layout.addWidget(self._date_label)
+        self._center.addWidget(clock_panel)
+
+        # Page 1: recipe step display
+        recipe_panel = QWidget()
+        recipe_layout = QVBoxLayout(recipe_panel)
+        recipe_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        recipe_layout.setSpacing(8)
+        recipe_layout.setContentsMargins(24, 16, 24, 16)
+
+        self._step_num_label = QLabel()
+        self._step_num_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._step_num_label.setStyleSheet(
+            f"color: {theme.TEXT_MUTED}; font-size: {_RECIPE_NUM_FONT_SIZE}px;"
+        )
+
+        self._step_label = QLabel()
+        self._step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._step_label.setWordWrap(True)
+        self._step_label.setStyleSheet(
+            f"color: {theme.TEXT_PRIMARY}; font-size: {_RECIPE_STEP_FONT_SIZE}px;"
+        )
+
+        recipe_layout.addWidget(self._step_num_label)
+        recipe_layout.addWidget(self._step_label)
+        self._center.addWidget(recipe_panel)
+
+        self._center.setCurrentIndex(0)
 
         # ── Bottom strip: state pill + sys stats ─────────────────────────────
         bottom = QWidget(self)
@@ -93,7 +136,7 @@ class IdleScreen(QWidget):
         bottom_layout.addWidget(self._cpu_label)
         bottom_layout.addWidget(self._ram_label)
 
-        outer.addWidget(center, stretch=1)
+        outer.addWidget(self._center, stretch=1)
         outer.addWidget(bottom)
 
         # ── Clock timer (every 60 seconds) ───────────────────────────────────
@@ -146,6 +189,32 @@ class IdleScreen(QWidget):
         _, fg = theme.STATE_COLORS.get(state_name, theme.STATE_COLORS["IDLE"])
         self._state_label.setText(f"● {state_name}")
         self._state_label.setStyleSheet(f"color: {fg}; font-size: 18px; font-weight: bold;")
+
+    def on_recipe_step(self, step_text: str, step_num: int, total_steps: int):
+        """Show recipe step display or return to clock.
+
+        step_num == 0 → step_text is all steps (recipe has ≤ 5 steps total)
+        step_num > 0  → step_text is one step
+        step_text ""  → clear and return to clock
+        """
+        if not step_text:
+            self._center.setCurrentIndex(0)
+            return
+
+        if step_num > 0:
+            self._step_num_label.setText(f"Step {step_num} of {total_steps}")
+            self._step_num_label.setVisible(True)
+            self._step_label.setStyleSheet(
+                f"color: {theme.TEXT_PRIMARY}; font-size: {_RECIPE_STEP_FONT_SIZE}px;"
+            )
+        else:
+            self._step_num_label.setVisible(False)
+            self._step_label.setStyleSheet(
+                f"color: {theme.TEXT_PRIMARY}; font-size: {_RECIPE_ALL_FONT_SIZE}px;"
+            )
+
+        self._step_label.setText(step_text)
+        self._center.setCurrentIndex(1)
 
     # ── Internal ─────────────────────────────────────────────────────────────
 

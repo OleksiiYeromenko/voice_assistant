@@ -9,6 +9,16 @@ import logging
 from typing import Any
 
 from src.tools.player import play_radio, set_volume, stop_playback
+from src.tools.recipes import (
+    ADD_RECIPE_TO_NOTION_TOOL,
+    FETCH_RECIPE_FROM_WEB_TOOL,
+    GET_RECIPE_TOOL,
+    SEARCH_RECIPES_TOOL,
+    add_recipe_to_notion,
+    fetch_recipe_from_web,
+    get_recipe,
+    search_recipes,
+)
 from src.tools.timers import cancel_timer, set_timer
 
 log = logging.getLogger(__name__)
@@ -239,6 +249,10 @@ ALL_TOOLS = [
     PLAY_RADIO_TOOL,
     STOP_PLAYBACK_TOOL,
     SET_VOLUME_TOOL,
+    SEARCH_RECIPES_TOOL,
+    GET_RECIPE_TOOL,
+    FETCH_RECIPE_FROM_WEB_TOOL,
+    ADD_RECIPE_TO_NOTION_TOOL,
 ]
 
 # Tools whose results go stale immediately (e.g., time changes every minute).
@@ -421,50 +435,6 @@ def web_search(query: str) -> str:
         )
 
 
-def find_recipe(query: str) -> str:
-    """Search TheMealDB for a recipe and return it formatted for voice playback."""
-    import httpx
-
-    try:
-        resp = httpx.get(
-            "https://www.themealdb.com/api/json/v1/1/search.php",
-            params={"s": query},
-            timeout=8,
-        )
-        data = resp.json()
-    except Exception as e:
-        return f"Could not fetch recipe: {e}"
-
-    meals = data.get("meals")
-    if not meals:
-        return f"No recipe found for '{query}'. Try a more general name or ask me to web search."
-
-    meal = meals[0]
-    name = meal["strMeal"]
-    category = meal.get("strCategory", "").strip()
-    area = meal.get("strArea", "").strip()
-
-    # TheMealDB stores up to 20 ingredient/measure pairs
-    ingredients = []
-    for i in range(1, 21):
-        ing = (meal.get(f"strIngredient{i}") or "").strip()
-        measure = (meal.get(f"strMeasure{i}") or "").strip()
-        if ing:
-            ingredients.append(f"{measure} {ing}".strip() if measure else ing)
-
-    # Clean instructions and split into steps
-    instructions = (meal.get("strInstructions") or "").replace("\r\n", "\n").replace("\r", "\n")
-    steps = [s.strip() for s in instructions.split("\n") if s.strip()]
-    numbered_steps = " ".join(f"Step {i}: {s}" for i, s in enumerate(steps, 1))
-
-    header = f"Recipe: {name}"
-    if category or area:
-        header += f" ({', '.join(filter(None, [area, category]))})"
-
-    ing_block = "Ingredients: " + "; ".join(ingredients) + "."
-    return f"{header}. {ing_block} {numbered_steps}"
-
-
 _TODOIST_API = "https://api.todoist.com/api/v1"
 
 
@@ -568,6 +538,10 @@ _TOOL_FUNCTIONS: dict[str, callable] = {
     "play_radio": play_radio,
     "stop_radio": stop_playback,
     "set_volume": set_volume,
+    "search_recipes": search_recipes,
+    "get_recipe": get_recipe,
+    "fetch_recipe_from_web": fetch_recipe_from_web,
+    "add_recipe_to_notion": add_recipe_to_notion,
 }
 
 

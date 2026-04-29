@@ -187,6 +187,7 @@ class MainWindow(QMainWindow):
         bus.resource_updated.connect(self._on_resource_updated)
         bus.shutdown_requested.connect(self._on_shutdown)
         bus.radio_changed.connect(self._idle_screen.on_radio_changed)
+        bus.recipe_step.connect(self._idle_screen.on_recipe_step)
 
         # ── Resource polling ──────────────────────────────────────────────────
         self._res_timer = QTimer(self)
@@ -298,6 +299,12 @@ def run_ui(fsm) -> int:
     fsm.ui_bus = bus
 
     register_radio_callback(lambda station: bus.radio_changed.emit(station))
+
+    from src.tools.recipes import register_recipe_step_callback
+
+    register_recipe_step_callback(
+        lambda text, num, total: bus.recipe_step.emit(text, num, total)
+    )
 
     display_cfg = {}
     try:
