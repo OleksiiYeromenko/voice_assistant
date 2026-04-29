@@ -62,6 +62,41 @@ COLOR_WARN = "#FFC107"  # < 85% CPU / < 75°C
 COLOR_CRIT = "#F44336"  # ≥ 85% CPU / ≥ 75°C
 
 
+# ---------------------------------------------------------------------------
+# Retro theme tokens  (mirrors the HTML spec's `retro` THEME entry)
+# ---------------------------------------------------------------------------
+RETRO_BG = "#04040c"
+RETRO_SURFACE = "#080818"
+RETRO_ELEVATED = "#000820"
+RETRO_BORDER = "#0033aa"
+RETRO_TEXT_PRIMARY = "#00ffcc"
+RETRO_TEXT_SECONDARY = "#0099aa"
+RETRO_TEXT_MUTED = "#003355"
+RETRO_ACCENT = "#ff44dd"
+
+# (bg, fg, label) per FSM state
+RETRO_STATE: dict[str, tuple[str, str, str]] = {
+    "IDLE":          ("#04040c", "#00ffcc", "** IDLE **"),
+    "SESSION_CHECK": ("#04040c", "#00ffcc", "** IDLE **"),
+    "LISTENING":     ("#040c04", "#00ff66", "* REC *"),
+    "THINKING":      ("#0c0804", "#ffcc00", "* PROC *"),
+    "SPEAKING":      ("#04040c", "#ff44dd", "* OUT *"),
+}
+
+RETRO_MODEL_FG: dict[str, str] = {
+    "remote": "#00e5ff",
+    "local":  "#69f0ae",
+    "claude": "#ff9800",
+    "gemini": "#b388ff",
+}
+RETRO_MODEL_SUB: dict[str, str] = {
+    "remote": "phi-4-mini",
+    "local":  "gemma3-4b",
+    "claude": "claude-3.5",
+    "gemini": "gemini-2.0",
+}
+
+
 def cpu_color(pct: float) -> str:
     if pct >= 85:
         return COLOR_CRIT

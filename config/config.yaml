@@ -5,7 +5,7 @@
 wake_word:
   # Pre-trained models: "hey_jarvis", "alexa", "hey_mycroft", "timer", etc.
   # Or path to custom .onnx model, e.g. "./models/my_wakeword.onnx"
-  model: "./models/hey_Poon-dyk_acc_0.8_rec_0.6_fp_1.32.onnx"
+  model: "./models/hey_Poon-dyk_acc_0.82_rec_0.64_fp_5.13.onnx"
   threshold: 0.85         # Detection confidence (0.0-1.0) — tune for your custom model
   record_detections: true  # Save 3s pre-detection WAV to data/wake_captures/raw/ for FP collection
 
@@ -33,7 +33,7 @@ llm:
   local:
     model: "gemma4-e2b-q4km"   # Informational; echoed in backend.name (llama.cpp ignores it)
     temperature: 0.7
-    num_ctx: 2048              # Set at llama-server startup (--ctx-size), kept for reference
+    num_ctx: 4096              # Set at llama-server startup (--ctx-size), kept for reference
     num_predict: 500           # Max tokens per response — caps generation time on slow CPU
     # num_thread: set at llama-server startup (-t flag), not passed via API
     think: false
@@ -106,6 +106,7 @@ session:
 
 # --- Display (UI mode only) ---
 display:
+  theme: retro               # "retro" = pixel/CRT style | "default" = dark minimal
   dim_after_idle_s: 60       # Seconds of idle before dimming backlight to minimum (0 = disabled)
   dim_min_level: 1           # Backlight value to set when dimming (0 = off, 1 = faintest visible)
 

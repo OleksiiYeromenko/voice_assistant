@@ -27,6 +27,10 @@ from src.ui.signals import UIEventBus
 from src.ui.theme import MAIN_STYLESHEET
 from src.ui.widgets.chat_view import ChatView
 from src.ui.widgets.idle_screen import IdleScreen
+from src.ui.widgets.retro_chat_view import RetroChatView
+from src.ui.widgets.retro_idle_screen import RetroIdleScreen
+from src.ui.widgets.retro_state_bar import RetroStateBar
+from src.ui.widgets.retro_sys_bar import RetroSysBar
 from src.ui.widgets.state_bar import StateBar
 from src.ui.widgets.sys_bar import SysBar
 
@@ -123,11 +127,20 @@ class MainWindow(QMainWindow):
     Uses a QStackedWidget to switch between two layouts:
       Page 0 — IdleScreen: ambient clock + date + slim sys strip
       Page 1 — Active:     StateBar / ChatView / SysBar
+
+    theme='retro' selects the pixel/CRT variant of all panels.
     """
 
-    def __init__(self, bus: UIEventBus, dim_after_s: int = 60, dim_level: int = 0):
+    def __init__(
+        self,
+        bus: UIEventBus,
+        dim_after_s: int = 60,
+        dim_level: int = 0,
+        ui_theme: str = "default",
+    ):
         super().__init__()
         self._bus = bus
+        self._ui_theme = ui_theme
         self.setWindowTitle("Voice Assistant")
         self.setStyleSheet(MAIN_STYLESHEET)
         self._backlight = BacklightController(dim_level=dim_level)
@@ -142,19 +155,31 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget(central)
         layout.addWidget(self._stack)
 
+        is_retro = (ui_theme == "retro")
+
         # Page 0 — idle ambient screen
-        self._idle_screen = IdleScreen()
+        if is_retro:
+            self._idle_screen = RetroIdleScreen()
+        else:
+            self._idle_screen = IdleScreen()
         self._stack.addWidget(self._idle_screen)
 
         # Page 1 — active conversation panels
         active = QWidget()
+        if is_retro:
+            active.setStyleSheet("background-color: #04040c;")
         active_layout = QVBoxLayout(active)
         active_layout.setContentsMargins(0, 0, 0, 0)
         active_layout.setSpacing(0)
 
-        self._state_bar = StateBar(bus, active)
-        self._chat_view = ChatView(bus, active)
-        self._sys_bar = SysBar(bus, active)
+        if is_retro:
+            self._state_bar = RetroStateBar(bus, active)
+            self._chat_view = RetroChatView(bus, active)
+            self._sys_bar = RetroSysBar(bus, active)
+        else:
+            self._state_bar = StateBar(bus, active)
+            self._chat_view = ChatView(bus, active)
+            self._sys_bar = SysBar(bus, active)
 
         active_layout.addWidget(self._state_bar)
         active_layout.addWidget(self._chat_view, stretch=1)
@@ -318,6 +343,7 @@ def run_ui(fsm) -> int:
         bus,
         dim_after_s=int(display_cfg.get("dim_after_idle_s", 60)),
         dim_level=int(display_cfg.get("dim_min_level", 0)),
+        ui_theme=str(display_cfg.get("theme", "default")),
     )
     window.show_fullscreen_rpi()
 
