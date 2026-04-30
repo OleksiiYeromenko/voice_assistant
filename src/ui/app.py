@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, Qt, QThread, QTimer
+from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -21,6 +22,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+_FONT_PATH = Path(__file__).parent.parent.parent / "fonts" / "PressStart2P-Regular.ttf"
 
 from src.tools.player import register_radio_callback
 from src.ui.signals import UIEventBus
@@ -137,6 +140,7 @@ class MainWindow(QMainWindow):
         dim_after_s: int = 60,
         dim_level: int = 0,
         ui_theme: str = "default",
+        full_cfg: dict | None = None,
     ):
         super().__init__()
         self._bus = bus
@@ -159,7 +163,7 @@ class MainWindow(QMainWindow):
 
         # Page 0 — idle ambient screen
         if is_retro:
-            self._idle_screen = RetroIdleScreen()
+            self._idle_screen = RetroIdleScreen(cfg=full_cfg or {})
         else:
             self._idle_screen = IdleScreen()
         self._stack.addWidget(self._idle_screen)
@@ -213,6 +217,8 @@ class MainWindow(QMainWindow):
         bus.shutdown_requested.connect(self._on_shutdown)
         bus.radio_changed.connect(self._idle_screen.on_radio_changed)
         bus.recipe_step.connect(self._idle_screen.on_recipe_step)
+        if is_retro and hasattr(self._idle_screen, "on_model_changed"):
+            bus.model_changed.connect(self._idle_screen.on_model_changed)
 
         # ── Resource polling ──────────────────────────────────────────────────
         self._res_timer = QTimer(self)
@@ -320,6 +326,16 @@ def run_ui(fsm) -> int:
     app.setApplicationName("VoiceAssistant")
     app.setOverrideCursor(Qt.CursorShape.BlankCursor)
 
+    # Load Press Start 2P pixel font for retro theme
+    if _FONT_PATH.exists():
+        fid = QFontDatabase.addApplicationFont(str(_FONT_PATH))
+        if fid >= 0:
+            log.info("Loaded Press Start 2P font")
+        else:
+            log.warning("Press Start 2P font file found but failed to load")
+    else:
+        log.warning("Press Start 2P font not found at %s — retro theme will use fallback", _FONT_PATH)
+
     bus = UIEventBus()
     fsm.ui_bus = bus
 
@@ -331,11 +347,13 @@ def run_ui(fsm) -> int:
         lambda text, num, total: bus.recipe_step.emit(text, num, total)
     )
 
-    display_cfg = {}
+    full_cfg: dict = {}
+    display_cfg: dict = {}
     try:
         from src.config import load_config
 
-        display_cfg = load_config().get("display") or {}
+        full_cfg = load_config() or {}
+        display_cfg = full_cfg.get("display") or {}
     except Exception as exc:
         log.debug(f"Display config load failed, using defaults: {exc}")
 
@@ -344,6 +362,7 @@ def run_ui(fsm) -> int:
         dim_after_s=int(display_cfg.get("dim_after_idle_s", 60)),
         dim_level=int(display_cfg.get("dim_min_level", 0)),
         ui_theme=str(display_cfg.get("theme", "default")),
+        full_cfg=full_cfg,
     )
     window.show_fullscreen_rpi()
 

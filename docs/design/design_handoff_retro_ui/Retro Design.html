@@ -1,0 +1,1404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Assistant UI — Retro — RPi 800×480</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Press+Start+2P&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+#root{width:100%;height:100%;display:flex;align-items:center;justify-content:center;}
+
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+@keyframes softpulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@keyframes dotbounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
+@keyframes speakbar{0%,100%{transform:scaleY(0.25)}50%{transform:scaleY(1)}}
+@keyframes fadein{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes glowaura{0%,100%{opacity:0.4}50%{opacity:0.7}}
+@keyframes toast-in{from{opacity:0;transform:translateX(32px)}to{opacity:1;transform:translateX(0)}}
+@keyframes toast-out{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(32px)}}
+@keyframes countdown{from{width:100%}to{width:0%}}
+@keyframes crtflicker{0%,100%{opacity:1}92%{opacity:1}93%{opacity:0.85}94%{opacity:1}97%{opacity:0.9}98%{opacity:1}}
+@keyframes pixelpulse{0%,100%{box-shadow:0 0 0 2px #00ffcc,0 0 12px #00ffcc80}50%{box-shadow:0 0 0 2px #00ffcc,0 0 24px #00ffccb0}}
+@keyframes rgbshift{0%,100%{text-shadow:2px 0 #ff00ff,-2px 0 #00ffff,0 0 8px #00ffcc}50%{text-shadow:-2px 0 #ff00ff,2px 0 #00ffff,0 0 4px #00ffcc}}
+@keyframes marquee{0%{transform:translateX(100%)}100%{transform:translateX(-100%)}}
+
+.fade-in{animation:fadein 0.25s ease both;}
+.no-scrollbar{overflow-y:auto;scrollbar-width:none;}
+.no-scrollbar::-webkit-scrollbar{display:none;}
+.pixel-flicker{animation:crtflicker 4s infinite;}
+.pixel-rgb{animation:rgbshift 3s ease-in-out infinite;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback,useMemo} = React;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THEME SYSTEM
+// ─────────────────────────────────────────────────────────────────────────────
+const THEMES = {
+  obsidian: {
+    id:'obsidian', name:'Obsidian',
+    bg:'#06060e', surface:'#0d0d1a', elevated:'#1c1c2e', border:'#28284a',
+    textPrimary:'#ededf5', textSecondary:'#7878a0', textMuted:'#3a3a58',
+    accent:'#4fc3f7', mono:"'JetBrains Mono',monospace", display:"'Outfit',sans-serif",
+    radius:20, scanlines:false, glow:false, clockWeight:200, terminalPrompt:false,
+    idleSubtleGradient:'radial-gradient(ellipse 70% 55% at 50% 42%, #12124020 0%, transparent 68%)',
+  },
+  terminal: {
+    id:'terminal', name:'Terminal',
+    bg:'#050a05', surface:'#080e08', elevated:'#101810', border:'#1c2c1c',
+    textPrimary:'#8de88d', textSecondary:'#5a8a5a', textMuted:'#2a4a2a',
+    accent:'#69f0ae', mono:"'JetBrains Mono',monospace", display:"'JetBrains Mono',monospace",
+    radius:3, scanlines:true, glow:false, clockWeight:400, terminalPrompt:true,
+    idleSubtleGradient:'none',
+  },
+  glow: {
+    id:'glow', name:'Glow',
+    bg:'#06051a', surface:'#0a0820', elevated:'#161230', border:'#221e44',
+    textPrimary:'#f0eeff', textSecondary:'#7a70c0', textMuted:'#363060',
+    accent:'#a78bfa', mono:"'JetBrains Mono',monospace", display:"'Outfit',sans-serif",
+    radius:24, scanlines:false, glow:true, clockWeight:200, terminalPrompt:false,
+    idleSubtleGradient:'radial-gradient(ellipse 80% 60% at 50% 45%, #3020a020 0%, transparent 70%)',
+  },
+  stratai: {
+    id:'stratai', name:'Stratai',
+    bg:'#121008', surface:'#1a1710', elevated:'#24201a', border:'#343028',
+    textPrimary:'#ede8dc', textSecondary:'#8a8070', textMuted:'#504840',
+    accent:'#d4a847', mono:"'IBM Plex Mono',monospace", display:"'IBM Plex Sans',sans-serif",
+    radius:14, scanlines:false, glow:false, clockWeight:300, terminalPrompt:false,
+    idleSubtleGradient:'radial-gradient(ellipse 65% 50% at 50% 44%, #d4a84712 0%, transparent 68%)',
+  },
+  opencode: {
+    id:'opencode', name:'OpenCode',
+    bg:'#201d1d', surface:'#2a2626', elevated:'#302c2c', border:'#646262',
+    textPrimary:'#fdfcfc', textSecondary:'#9a9898', textMuted:'#4a4848',
+    accent:'#007aff', mono:"'IBM Plex Mono','Courier New',monospace", display:"'IBM Plex Mono','Courier New',monospace",
+    radius:4, scanlines:false, glow:false, clockWeight:400, terminalPrompt:true,
+    idleSubtleGradient:'none',
+  },
+  retro: {
+    id:'retro', name:'Retro',
+    bg:'#04040c', surface:'#080818', elevated:'#0c0c24', border:'#0033aa',
+    textPrimary:'#00ffcc', textSecondary:'#0099aa', textMuted:'#003355',
+    accent:'#ff44dd', mono:"'Press Start 2P',monospace", display:"'Press Start 2P',monospace",
+    radius:0, scanlines:true, glow:false, clockWeight:400, terminalPrompt:true,
+    idleSubtleGradient:'none',
+    pixel:true,
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE + MODEL CONFIGS
+// ─────────────────────────────────────────────────────────────────────────────
+const STATES = {
+  IDLE:      {label:'IDLE',      bg:'#18202e', fg:'#5a6880', glow:'#5a6880'},
+  LISTENING: {label:'LISTENING', bg:'#0e2818', fg:'#4ade80', glow:'#4ade80'},
+  THINKING:  {label:'THINKING',  bg:'#281e06', fg:'#fbbf24', glow:'#fbbf24'},
+  SPEAKING:  {label:'SPEAKING',  bg:'#001828', fg:'#38bdf8', glow:'#38bdf8'},
+};
+const FSM_CYCLE = ['IDLE','LISTENING','THINKING','SPEAKING'];
+
+const MODELS = {
+  GPU:    {label:'⚡ GPU',   bg:'#002838', fg:'#00e5ff', sub:'phi-4-mini'},
+  RPi:    {label:'◉ RPi',   bg:'#0e2818', fg:'#69f0ae', sub:'gemma3-4b'},
+  Claude: {label:'Claude',bg:'#2a1200', fg:'#ff9800', sub:'claude-3.5'},
+  Gemini: {label:'✦ Gemini',bg:'#160040', fg:'#b388ff', sub:'gemini-2.0'},
+};
+
+function metricColor(v, warn, crit){ return v>=crit?'#ef4444':v>=warn?'#f59e0b':'#4ade80'; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOOKS
+// ─────────────────────────────────────────────────────────────────────────────
+function useClock(){
+  const [t,setT]=useState(new Date());
+  useEffect(()=>{const id=setInterval(()=>setT(new Date()),1000);return()=>clearInterval(id);},[]);
+  return t;
+}
+
+// Override state visuals per theme
+function getStateStyle(fsm, themeId){
+  if(themeId==='retro'){
+    const S={
+      IDLE:      {label:'** IDLE **',  bg:'#04040c', fg:'#00ffcc', glow:'#00ffcc'},
+      LISTENING: {label:'* REC *',     bg:'#040c04', fg:'#00ff66', glow:'#00ff66'},
+      THINKING:  {label:'* PROC *',    bg:'#0c0804', fg:'#ffcc00', glow:'#ffcc00'},
+      SPEAKING:  {label:'* OUT *',     bg:'#04040c', fg:'#ff44dd', glow:'#ff44dd'},
+    };
+    return S[fsm];
+  }
+  if(themeId==='opencode'){
+    const S={
+      IDLE:      {label:'IDLE',      bg:'#2a2626', fg:'#646262', glow:'#646262'},
+      LISTENING: {label:'LISTENING', bg:'#1a2620', fg:'#30d158', glow:'#30d158'},
+      THINKING:  {label:'THINKING',  bg:'#26220e', fg:'#ff9f0a', glow:'#ff9f0a'},
+      SPEAKING:  {label:'SPEAKING',  bg:'#0e1a26', fg:'#007aff', glow:'#007aff'},
+    };
+    return S[fsm];
+  }
+  if(themeId==='stratai'){
+    const S={
+      IDLE:      {label:'IDLE',      bg:'#1e1c16', fg:'#6a6050', glow:'#6a6050'},
+      LISTENING: {label:'LISTENING', bg:'#162014', fg:'#6db87a', glow:'#6db87a'},
+      THINKING:  {label:'THINKING',  bg:'#241c08', fg:'#d4a847', glow:'#d4a847'},
+      SPEAKING:  {label:'SPEAKING',  bg:'#0e1820', fg:'#6aaed4', glow:'#6aaed4'},
+    };
+    return S[fsm];
+  }
+  return STATES[fsm];
+}
+function StatePill({fsm, theme}){
+  const s = getStateStyle(fsm, theme.id);
+  const isThinking = fsm==='THINKING';
+  const isListening = fsm==='LISTENING';
+  return (
+    <div style={{
+      display:'flex', alignItems:'center', gap:9,
+      background:s.bg, borderRadius:theme.radius,
+      padding:'0 16px', height:40,
+      border:`1px solid ${s.fg}28`,
+      boxShadow: theme.glow ? `0 0 20px ${s.glow}40, inset 0 1px 0 ${s.fg}15` : `inset 0 1px 0 ${s.fg}10`,
+      transition:'all 0.5s ease', minWidth:148, flexShrink:0,
+    }}>
+      {/* Indicator dot */}
+      <span style={{
+        width:7,height:7,borderRadius:'50%',background:s.fg,flexShrink:0,
+        boxShadow:`0 0 8px ${s.fg}`,
+        animation: isListening?'softpulse 0.9s ease-in-out infinite':
+                   isThinking?'softpulse 1.4s ease-in-out infinite':'none',
+      }}/>
+      <span style={{
+        fontFamily:theme.display, fontSize:14, fontWeight:600,
+        color:s.fg, letterSpacing:'0.1em', whiteSpace:'nowrap',
+      }}>{s.label}</span>
+      {isThinking && (
+        <span style={{display:'flex',gap:3,marginLeft:1}}>
+          {[0,1,2].map(i=>(
+            <span key={i} style={{
+              width:4,height:4,borderRadius:'50%',background:s.fg,display:'inline-block',
+              animation:`dotbounce 1.1s ease-in-out ${i*0.18}s infinite`,
+            }}/>
+          ))}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Claude / Anthropic logomark — approximation of the Anthropic geometric mark
+function ClaudeLogo({size=15, color}){
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{flexShrink:0,display:'block'}}>
+      {/* Outer triangle */}
+      <path d="M12 3L21.5 19.5H2.5L12 3Z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" fill="none"/>
+      {/* Inner void — creates the Anthropic "A" cut */}
+      <path d="M12 9.5L16.2 16.5H7.8L12 9.5Z" fill={color}/>
+    </svg>
+  );
+}
+
+function ModelBadge({modelKey, theme}){
+  const m = MODELS[modelKey];
+  const isClaude = modelKey === 'Claude';
+  const labelText = isClaude ? 'Claude' : m.label;
+  return (
+    <div style={{
+      display:'flex',alignItems:'center',gap:6,
+      background:m.bg, borderRadius:Math.max(theme.radius-6,3),
+      padding:'0 10px', height:32,
+      border:`1px solid ${m.fg}20`, flexShrink:0,
+    }}>
+      {isClaude
+        ? <ClaudeLogo size={14} color={m.fg}/>
+        : null}
+      <span style={{fontFamily:theme.mono,fontSize:13,fontWeight:600,color:m.fg,whiteSpace:'nowrap'}}>{labelText}</span>
+      <span style={{fontFamily:theme.mono,fontSize:11,color:m.fg+'80',whiteSpace:'nowrap'}}>{m.sub}</span>
+    </div>
+  );
+}
+
+function RadioBadge({station, theme}){
+  const [beat,setBeat]=useState(true);
+  useEffect(()=>{const id=setInterval(()=>setBeat(v=>!v),700);return()=>clearInterval(id);},[]);
+  const trunc = station.slice(0,24);
+  return (
+    <div style={{
+      display:'flex',alignItems:'center',gap:6,
+      background:'#003030', borderRadius:Math.max(theme.radius-6,3),
+      padding:'0 10px', height:32,
+      border:`1px solid #00808038`, flexShrink:0,
+    }}>
+      <span style={{
+        fontSize:13, color:'#4fc3f7',
+        opacity:beat?1:0.25, transition:'opacity 0.25s ease',
+      }}>♪</span>
+      <span style={{
+        fontFamily:theme.mono,fontSize:12,color:'#4fc3f7',
+        maxWidth:138,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
+      }}>{trunc}</span>
+    </div>
+  );
+}
+
+function SpeakBars({color}){
+  const delays = [0,0.09,0.18,0.06,0.24,0.12,0.03,0.21,0.15];
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:2,height:22}}>
+      {delays.map((d,i)=>(
+        <div key={i} style={{
+          width:3, height:22, display:'flex',alignItems:'center',justifyContent:'center',
+        }}>
+          <div style={{
+            width:3, borderRadius:2, background:color,
+            transformOrigin:'center',
+            animation:`speakbar ${0.5+i%3*0.1}s ease-in-out ${d}s infinite`,
+            height:'100%',
+          }}/>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MiniBar({pct, color, width=56}){
+  return (
+    <div style={{background:'#ffffff0c',borderRadius:2,height:3,width,overflow:'hidden',flexShrink:0}}>
+      <div style={{
+        width:`${Math.min(pct,100)}%`,height:'100%',
+        background:color,borderRadius:2,
+        transition:'width 0.6s ease',
+      }}/>
+    </div>
+  );
+}
+
+// Waveform canvas for LISTENING — smooth layered sine waves
+function Waveform({active, theme}){
+  const cvs = useRef(null);
+  const raf = useRef(null);
+  const t = useRef(0);
+  useEffect(()=>{
+    if(!active){if(raf.current)cancelAnimationFrame(raf.current);return;}
+    const canvas=cvs.current; if(!canvas)return;
+    const ctx=canvas.getContext('2d');
+    // Parse accent hex to rgb for gradient
+    const hex=theme.accent.replace('#','');
+    const r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+    const draw=()=>{
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      const W=canvas.width, H=canvas.height, mid=H/2;
+      const layers=[
+        {amp:26, freq:0.016, speed:0.7,  alpha:0.55, lw:2.2},
+        {amp:16, freq:0.024, speed:1.15, alpha:0.30, lw:1.5},
+        {amp:10, freq:0.038, speed:-0.5, alpha:0.18, lw:1.0},
+      ];
+      layers.forEach(({amp,freq,speed,alpha,lw})=>{
+        // Fade in/out at edges
+        const grad=ctx.createLinearGradient(0,0,W,0);
+        grad.addColorStop(0,   `rgba(${r},${g},${b},0)`);
+        grad.addColorStop(0.1, `rgba(${r},${g},${b},${alpha})`);
+        grad.addColorStop(0.9, `rgba(${r},${g},${b},${alpha})`);
+        grad.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+        ctx.beginPath();
+        ctx.strokeStyle=grad;
+        ctx.lineWidth=lw;
+        ctx.lineCap='round';
+        ctx.lineJoin='round';
+        for(let x=0;x<=W;x+=2){
+          const breathe=0.65+0.35*Math.sin(t.current*0.28+x*0.008);
+          const y=mid+Math.sin(x*freq+t.current*speed)*amp*breathe;
+          x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+        }
+        ctx.stroke();
+      });
+      t.current+=0.045;
+      raf.current=requestAnimationFrame(draw);
+    };
+    draw();
+    return()=>cancelAnimationFrame(raf.current);
+  },[active, theme.accent]);
+  return <canvas ref={cvs} width={760} height={100} style={{display:'block',margin:'0 auto',opacity:active?1:0,transition:'opacity 0.5s'}}/>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOAST NOTIFICATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+const TOAST_ICONS = {
+  timer:    {icon:'⏱', color:'#f59e0b', bg:'#2a1e06'},
+  reminder: {icon:'📅', color:'#60a5fa', bg:'#061828'},
+  alarm:    {icon:'⏰', color:'#f87171', bg:'#280606'},
+};
+
+function Toast({toast, theme, onDismiss}){
+  const [leaving, setLeaving] = useState(false);
+  const type = TOAST_ICONS[toast.type] || TOAST_ICONS.reminder;
+
+  const dismiss = () => {
+    setLeaving(true);
+    setTimeout(()=>onDismiss(toast.id), 280);
+  };
+
+  useEffect(()=>{
+    const id = setTimeout(dismiss, toast.duration || 6000);
+    return ()=>clearTimeout(id);
+  },[]);
+
+  return (
+    <div style={{
+      background: theme.elevated,
+      border: `1px solid ${type.color}30`,
+      borderLeft: `3px solid ${type.color}`,
+      borderRadius: theme.radius * 0.7,
+      padding: '10px 12px',
+      width: 264,
+      pointerEvents: 'all',
+      animation: leaving ? 'toast-out 0.28s ease forwards' : 'toast-in 0.28s ease both',
+      position: 'relative',
+      overflow: 'hidden',
+      boxShadow: `0 4px 24px rgba(0,0,0,0.4), 0 0 0 1px ${type.color}15`,
+    }}>
+      {/* Auto-dismiss progress bar */}
+      <div style={{
+        position:'absolute', bottom:0, left:0, right:0, height:2,
+        background: type.color + '30',
+      }}>
+        <div style={{
+          height:'100%', background: type.color,
+          animation: `countdown ${(toast.duration||6000)}ms linear forwards`,
+          borderRadius:2,
+        }}/>
+      </div>
+
+      <div style={{display:'flex', alignItems:'flex-start', gap:10}}>
+        {/* Icon */}
+        <div style={{
+          width:32, height:32, borderRadius:8,
+          background: type.bg,
+          display:'flex', alignItems:'center', justifyContent:'center',
+          fontSize:16, flexShrink:0,
+        }}>{type.icon}</div>
+
+        {/* Content */}
+        <div style={{flex:1, minWidth:0}}>
+          <div style={{
+            fontFamily:theme.display, fontSize:13, fontWeight:600,
+            color:theme.textPrimary, marginBottom:2, whiteSpace:'nowrap',
+            overflow:'hidden', textOverflow:'ellipsis',
+          }}>{toast.title}</div>
+          <div style={{
+            fontFamily:theme.mono, fontSize:11,
+            color:theme.textSecondary,
+          }}>{toast.subtitle}</div>
+        </div>
+
+        {/* Dismiss */}
+        <button onClick={dismiss} style={{
+          background:'none', border:'none', color:theme.textMuted,
+          cursor:'pointer', fontSize:14, padding:'0 2px', lineHeight:1,
+          flexShrink:0, marginTop:1,
+        }}>×</button>
+      </div>
+    </div>
+  );
+}
+
+function ToastOverlay({toasts, theme, onDismiss}){
+  if(!toasts.length) return null;
+  return (
+    <div style={{
+      position:'absolute', top:70, right:10, zIndex:50,
+      display:'flex', flexDirection:'column', gap:8,
+      pointerEvents:'none',
+    }}>
+      {toasts.map(t=>(
+        <Toast key={t.id} toast={t} theme={theme} onDismiss={onDismiss}/>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCREEN A — IDLE
+// ─────────────────────────────────────────────────────────────────────────────
+function IdleScreen({theme, time, sys, radio}){
+  const hh=time.getHours().toString().padStart(2,'0');
+  const mm=time.getMinutes().toString().padStart(2,'0');
+  const ss=time.getSeconds().toString().padStart(2,'0');
+  const dateStr=time.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'});
+  const cpuC=metricColor(sys.cpu,70,90);
+  const tempC=metricColor(sys.temp,65,75);
+  const ramC=metricColor(sys.ramUsed/sys.ramTotal*100,70,85);
+
+  return (
+    <div style={{
+      width:800,height:480,background:theme.bg,
+      fontFamily:theme.display,display:'flex',flexDirection:'column',
+      position:'relative',overflow:'hidden',
+    }}>
+      {/* Ambient background */}
+      {theme.idleSubtleGradient!=='none' && (
+        <div style={{position:'absolute',inset:0,background:theme.idleSubtleGradient,pointerEvents:'none'}}/>
+      )}
+      {/* Scanlines */}
+      {theme.scanlines && <Scanlines/>}
+
+      {/* CENTER CLOCK */}
+      <div style={{
+        flex:1,display:'flex',flexDirection:'column',
+        alignItems:'center',justifyContent:'center',gap:4,
+        paddingBottom:8,
+      }}>
+        {/* Big clock */}
+        <div style={{
+          fontFamily:theme.display, fontWeight:theme.clockWeight,
+          fontSize:124, lineHeight:1,
+          color:theme.textPrimary,
+          letterSpacing:'-0.025em',
+          fontVariantNumeric:'tabular-nums',
+          textShadow: theme.glow?'0 0 60px rgba(167,139,250,0.25)':
+                      theme.id==='terminal'?`0 0 20px ${theme.accent}60`:'none',
+        }}>
+          {hh}<span style={{opacity:0.35,animation:'softpulse 2s ease-in-out infinite'}}>:</span>{mm}
+          {theme.id==='terminal' && (
+            <span style={{fontSize:52,opacity:0.4,marginLeft:4,fontWeight:400}}>:{ss}</span>
+          )}
+        </div>
+
+        {/* Date */}
+        <div style={{
+          fontFamily:theme.display, fontSize:20, fontWeight:400,
+          color:theme.textSecondary, letterSpacing:'0.06em',
+          textTransform:theme.id==='terminal'?'uppercase':'none',
+          marginTop:6, whiteSpace:'nowrap',
+        }}>{dateStr}</div>
+
+
+
+        {/* Radio badge */}
+        {radio && (
+          <div style={{marginTop:20}}>
+            <RadioBadge station={radio} theme={theme}/>
+          </div>
+        )}
+
+        {/* Subtle hint */}
+        <div style={{
+          position:'absolute',bottom:68,
+          fontFamily:theme.mono,fontSize:10,color:theme.textMuted,
+          letterSpacing:'0.12em', opacity:0.6, whiteSpace:'nowrap',
+        }}>TAP TO ACTIVATE</div>
+      </div>
+
+      {/* BOTTOM STATUS STRIP */}
+      <div style={{
+        height:52,background:theme.elevated,
+        borderTop:`1px solid ${theme.border}`,
+        display:'flex',alignItems:'center',
+        padding:'0 20px',gap:0,flexShrink:0,
+      }}>
+        {/* IDLE state */}
+        <div style={{display:'flex',alignItems:'center',gap:7}}>
+          <span style={{width:6,height:6,borderRadius:'50%',background:getStateStyle('IDLE',theme.id).fg,display:'block',flexShrink:0}}/>
+          <span style={{fontFamily:theme.mono,fontSize:11,color:theme.textMuted,letterSpacing:'0.12em'}}>IDLE</span>
+        </div>
+
+        <div style={{flex:1}}/>
+
+        {/* System stats */}
+        <div style={{display:'flex',gap:16,alignItems:'center',flexShrink:0}}>
+          <span style={{fontFamily:theme.mono,fontSize:11,color:tempC,whiteSpace:'nowrap'}}>{sys.temp}°C</span>
+          <span style={{fontFamily:theme.mono,fontSize:11,color:cpuC,whiteSpace:'nowrap'}}>CPU {sys.cpu}%</span>
+          <span style={{fontFamily:theme.mono,fontSize:11,color:ramC,whiteSpace:'nowrap'}}>{(sys.ramUsed/1024).toFixed(1)}G RAM</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCREEN B — ACTIVE
+// ─────────────────────────────────────────────────────────────────────────────
+function ActiveScreen({theme,time,sys,fsm,modelKey,radio,transcript,tools,response,streamDone,latency}){
+  const hh=time.getHours().toString().padStart(2,'0');
+  const mm=time.getMinutes().toString().padStart(2,'0');
+  const cpuC=metricColor(sys.cpu,70,90);
+  const ramPct=sys.ramUsed/sys.ramTotal*100;
+  const ramC=metricColor(ramPct,70,85);
+  const tempC=metricColor(sys.temp,65,75);
+  const logRef=useRef(null);
+
+  useEffect(()=>{
+    if(logRef.current) logRef.current.scrollTop=logRef.current.scrollHeight;
+  },[response,tools]);
+
+  const stateGlowColor = getStateStyle(fsm, theme.id)?.glow || '#ffffff';
+
+  return (
+    <div style={{
+      width:800,height:480,background:theme.bg,
+      fontFamily:theme.display,display:'flex',flexDirection:'column',
+      overflow:'hidden',position:'relative',
+    }}>
+      {/* Scanlines */}
+      {theme.scanlines && <Scanlines/>}
+
+      {/* State ambient glow (glow theme only) */}
+      {theme.glow && (
+        <div style={{
+          position:'absolute',top:0,left:0,right:0,height:160,
+          background:`radial-gradient(ellipse 90% 120% at 50% 0%, ${stateGlowColor}18 0%, transparent 75%)`,
+          transition:'background 0.8s ease',pointerEvents:'none',zIndex:0,
+        }}/>
+      )}
+
+      {/* ── TOP BAR ── */}
+      {theme.id === 'opencode' ? (
+        /* ── OpenCode terminal status bar ── */
+        <div style={{
+          height:48, background:theme.bg,
+          borderBottom:`1px solid ${theme.border}`,
+          display:'flex', alignItems:'center',
+          padding:'0 16px', gap:0, flexShrink:0, zIndex:1,
+          fontFamily:theme.mono, fontSize:13, color:theme.textSecondary,
+          letterSpacing:'0.03em',
+        }}>
+          {(()=>{
+            const s = getStateStyle(fsm, theme.id);
+            const m = MODELS[modelKey];
+            const isListening = fsm==='LISTENING';
+            const isThinking = fsm==='THINKING';
+            const Pipe = ()=>(
+              <span style={{color:theme.border, margin:'0 12px', userSelect:'none'}}>│</span>
+            );
+            return (<>
+              {/* state */}
+              <span style={{
+                color:s.fg, fontWeight:600, letterSpacing:'0.08em',
+                display:'flex', alignItems:'center', gap:7,
+              }}>
+                <span style={{
+                  width:6, height:6, borderRadius:'50%', background:s.fg, display:'inline-block', flexShrink:0,
+                  animation: isListening?'softpulse 0.9s ease-in-out infinite':
+                             isThinking?'softpulse 1.4s ease-in-out infinite':'none',
+                }}/>
+                {fsm}
+              </span>
+              <Pipe/>
+              {/* model */}
+              <span style={{color:theme.textSecondary}}>
+                <span style={{color:m.fg, fontWeight:500}}>{m.label.replace(/^[^ ]+ /,'')}</span>
+                <span style={{color:theme.textMuted, marginLeft:6}}>{m.sub}</span>
+              </span>
+              {radio && (<>
+                <Pipe/>
+                <span style={{color:theme.textMuted}}>♪ <span style={{color:theme.textSecondary}}>{radio.slice(0,22)}</span></span>
+              </>)}
+              <div style={{flex:1}}/>
+              {fsm==='SPEAKING' && (
+                <span style={{marginRight:12}}>
+                  <SpeakBars color={s.fg}/>
+                </span>
+              )}
+              <span style={{color:theme.textSecondary, fontWeight:500}}>{hh}:{mm}</span>
+            </>);
+          })()}
+        </div>
+      ) : (
+      <div style={{
+        height:64,background:theme.elevated,
+        borderBottom:`1px solid ${theme.border}`,
+        display:'flex',alignItems:'center',
+        padding:'0 14px',gap:10,flexShrink:0,zIndex:1,
+      }}>
+        <StatePill fsm={fsm} theme={theme}/>
+        <ModelBadge modelKey={modelKey} theme={theme}/>
+        {radio && <RadioBadge station={radio} theme={theme}/>}
+        <div style={{flex:1}}/>
+        {fsm==='SPEAKING' && <SpeakBars color={getStateStyle('SPEAKING', theme.id).fg}/>}
+        <span style={{fontFamily:theme.mono,fontSize:17,color:theme.textSecondary,letterSpacing:'0.06em',flexShrink:0}}>
+          {hh}:{mm}
+        </span>
+      </div>
+      )}
+
+      {/* ── USER TRANSCRIPT ── */}
+      <div style={{
+        height:52,padding:'0 18px',
+        display:'flex',alignItems:'center',
+        background:theme.surface,
+        borderBottom:`1px solid ${theme.border}`,
+        flexShrink:0,zIndex:1,
+      }}>
+        {transcript ? (
+          <span style={{fontFamily:theme.display,fontSize:19,color:theme.textPrimary,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'100%'}}>
+            <span style={{color:theme.accent,fontStyle:'normal',marginRight:8,fontSize:13,fontFamily:theme.mono,opacity:0.7}}>
+              {theme.terminalPrompt?'> ':''}You
+            </span>
+            <span style={{fontStyle:'italic',color:theme.textSecondary}}>{transcript}</span>
+          </span>
+        ) : (
+          <span style={{fontFamily:theme.mono,fontSize:12,color:theme.textMuted,letterSpacing:'0.08em'}}>
+            {fsm==='LISTENING'?'— listening —':'—'}
+          </span>
+        )}
+      </div>
+
+      {/* ── CHAT LOG ── */}
+      <div ref={logRef} className="no-scrollbar" style={{
+        flex:1,background:theme.surface,
+        padding:'14px 18px',
+        display:'flex',flexDirection:'column',gap:0,
+        overflowY:'auto',zIndex:1,
+        position:'relative',
+      }}>
+        {/* Waveform during LISTENING */}
+        {fsm==='LISTENING' && (
+          <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',minHeight:120}}>
+            <Waveform active={true} theme={theme}/>
+          </div>
+        )}
+
+        {/* Empty state — nothing to show yet */}
+        {fsm!=='LISTENING' && tools.length===0 && !response && fsm!=='IDLE' && (
+          <div style={{
+            flex:1,display:'flex',alignItems:'center',justifyContent:'center',
+            flexDirection:'column',gap:10,opacity:0.25,
+          }}>
+            {fsm==='THINKING' && (
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                {[0,1,2].map(i=>(
+                  <div key={i} style={{
+                    width:10,height:10,borderRadius:'50%',
+                    background:getStateStyle('THINKING',theme.id).fg,
+                    animation:`dotbounce 1.1s ease-in-out ${i*0.18}s infinite`,
+                  }}/>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tool calls */}
+        {tools.length>0 && (
+          <div style={{display:'flex',flexDirection:'column',gap:5,marginBottom:10}}>
+            {tools.map((tool,i)=>(
+              <div key={i} className="fade-in" style={{
+                display:'flex',alignItems:'baseline',gap:9,
+                fontFamily:theme.mono,fontSize:14,
+                overflow:'hidden', minWidth:0,
+              }}>
+                <span style={{
+                  fontSize:12,flexShrink:0,
+                  color:tool.done?'#22c55e':'#60a5fa',
+                  animation:tool.done?'none':'softpulse 1.2s ease-in-out infinite',
+                }}>⚙</span>
+                <span style={{fontWeight:600,color:tool.done?'#22c55e':'#60a5fa'}}>{tool.name}</span>
+                <span style={{color:theme.textMuted}}>·</span>
+                <span style={{color:tool.done?theme.textSecondary:theme.textMuted,fontStyle:tool.done?'normal':'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                  {tool.done?tool.result:'running…'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Divider between tools and response */}
+        {tools.length>0 && response && (
+          <div style={{height:1,background:theme.border,margin:'6px 0 10px'}}/>
+        )}
+
+        {/* LLM response */}
+        {response && (
+          <div className="fade-in" style={{
+            fontSize:27, fontWeight:400, lineHeight:1.42,
+            color:theme.textPrimary,
+            fontFamily:theme.display,
+          }}>
+            {response}
+            {!streamDone && (
+              <span style={{
+                display:'inline-block',width:2,height:'0.9em',
+                background:theme.accent,marginLeft:4,verticalAlign:'text-bottom',
+                animation:'blink 0.75s step-end infinite',
+              }}/>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── BOTTOM STATS BAR ── */}
+      <div style={{
+        height:44, background:theme.elevated,
+        borderTop:`1px solid ${theme.border}`,
+        display:'flex', alignItems:'center',
+        padding:'0 18px', gap:0, flexShrink:0, zIndex:1,
+      }}>
+        {/* CPU */}
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <span style={{fontFamily:theme.mono,fontSize:10,color:theme.textSecondary,letterSpacing:'0.1em'}}>CPU</span>
+          <MiniBar pct={sys.cpu} color={cpuC} width={48}/>
+          <span style={{fontFamily:theme.mono,fontSize:12,fontWeight:500,color:cpuC}}>{sys.cpu}%</span>
+        </div>
+
+        <div style={{width:1,height:20,background:theme.border,margin:'0 14px'}}/>
+
+        {/* RAM */}
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <span style={{fontFamily:theme.mono,fontSize:10,color:theme.textSecondary,letterSpacing:'0.1em'}}>RAM</span>
+          <MiniBar pct={ramPct} color={ramC} width={56}/>
+          <span style={{fontFamily:theme.mono,fontSize:12,fontWeight:500,color:ramC}}>{(sys.ramUsed/1024).toFixed(1)}/{(sys.ramTotal/1024).toFixed(0)}G</span>
+        </div>
+
+        <div style={{width:1,height:20,background:theme.border,margin:'0 14px'}}/>
+
+        {/* Temp */}
+        <div style={{display:'flex',alignItems:'center',gap:5}}>
+          <span style={{fontFamily:theme.mono,fontSize:10,color:theme.textSecondary,letterSpacing:'0.1em'}}>TEMP</span>
+          <span style={{fontFamily:theme.mono,fontSize:13,fontWeight:600,color:tempC}}>{sys.temp}°C</span>
+        </div>
+
+        <div style={{flex:1}}/>
+
+        {/* Latency */}
+        <div style={{display:'flex',alignItems:'center',gap:14}}>
+          {[['STT', latency.stt?`${latency.stt}ms`:'—'],
+            ['TTFT', latency.ttft?`${latency.ttft}s`:'—'],
+            ['TPS', latency.tps??'—']].map(([k,v])=>(
+            <div key={k} style={{display:'flex',alignItems:'baseline',gap:5}}>
+              <span style={{fontFamily:theme.mono,fontSize:10,color:theme.textSecondary,letterSpacing:'0.06em'}}>{k}</span>
+              <span style={{fontFamily:theme.mono,fontSize:12,color:theme.textSecondary}}>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Scanlines({heavy}){
+  return (
+    <div style={{
+      position:'absolute',inset:0,pointerEvents:'none',zIndex:9,
+      backgroundImage: heavy
+        ? 'repeating-linear-gradient(0deg,transparent,transparent 1px,rgba(0,0,0,0.35) 1px,rgba(0,0,0,0.35) 2px)'
+        : 'repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.14) 2px,rgba(0,0,0,0.14) 4px)',
+    }}/>
+  );
+}
+
+// ── PIXEL BORDER — chunky inset shadow box border ──
+function PixelBox({color, children, style={}}){
+  return (
+    <div style={{
+      border:`2px solid ${color}`,
+      boxShadow:`inset -2px -2px 0 0 rgba(0,0,0,0.6), inset 2px 2px 0 0 ${color}30, 0 0 8px ${color}40`,
+      ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+// ── RETRO IDLE SCREEN ──
+function RetroIdleScreen({theme, time, sys, radio}){
+  const hh=time.getHours().toString().padStart(2,'0');
+  const mm=time.getMinutes().toString().padStart(2,'0');
+  const [blink,setBlink]=useState(true);
+  const [uptime,setUptime]=useState({h:3,m:14,s:7});
+  useEffect(()=>{const id=setInterval(()=>setBlink(v=>!v),500);return()=>clearInterval(id);},[]);
+  useEffect(()=>{
+    const id=setInterval(()=>setUptime(u=>{
+      let s=u.s+1,m=u.m,h=u.h;
+      if(s>=60){s=0;m++;}
+      if(m>=60){m=0;h++;}
+      return{h,m,s};
+    }),1000);
+    return()=>clearInterval(id);
+  },[]);
+  const dateStr=time.toLocaleDateString('en-US',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
+  const cpuC = sys.cpu>85?'#ff4444':sys.cpu>65?'#ffcc00':'#00ffcc';
+  const tempC = sys.temp>72?'#ff4444':sys.temp>60?'#ffcc00':'#00ffcc';
+  const uptimeStr = `${String(uptime.h).padStart(2,'0')}H ${String(uptime.m).padStart(2,'0')}M`;
+
+  // ASCII-style bar
+  const bar = (pct, len=12, onColor='#00ffcc', offColor='#003355') => {
+    const filled = Math.round(pct/100*len);
+    return (
+      <span style={{fontFamily:theme.mono,fontSize:7,letterSpacing:2}}>
+        {Array.from({length:len},(_,i)=>(
+          <span key={i} style={{color:i<filled?onColor:offColor}}>█</span>
+        ))}
+      </span>
+    );
+  };
+
+  return (
+    <div className="pixel-flicker" style={{
+      width:800,height:480,background:theme.bg,
+      fontFamily:theme.mono,display:'flex',flexDirection:'column',
+      position:'relative',overflow:'hidden',
+    }}>
+      <Scanlines heavy/>
+
+      {/* HEADER BAR */}
+      <div style={{
+        height:40,background:'#000820',
+        borderBottom:`2px solid ${theme.border}`,
+        display:'flex',alignItems:'center',padding:'0 16px',gap:0,
+        boxShadow:`0 2px 0 0 ${theme.border}`,
+      }}>
+        <span style={{fontSize:8,color:theme.accent,letterSpacing:2}}>[ POONDYK.SYS ]</span>
+        <div style={{flex:1}}/>
+        <span style={{fontSize:7,color:theme.textMuted,letterSpacing:1}}>{dateStr}</span>
+      </div>
+
+      {/* MAIN CONTENT */}
+      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:0}}>
+
+        {/* BIG PIXEL CLOCK */}
+        <div style={{textAlign:'center',lineHeight:1,marginBottom:28}}>
+          <div style={{
+            fontSize:64, color:theme.textPrimary,
+            fontFamily:theme.mono,letterSpacing:8,
+            textShadow:`0 0 20px ${theme.textPrimary}80, 0 0 40px ${theme.textPrimary}30, 3px 2px 0px #aa00ff60, -3px -2px 0px #6600cc40`,
+          }}>
+            {hh}<span style={{opacity:blink?1:0,transition:'none'}}>:</span>{mm}
+          </div>
+        </div>
+
+        {/* STATUS BLOCK + PROMPT grouped together */}
+        <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:0}}>
+          <PixelBox color={theme.border} style={{padding:'12px 20px',background:'#040414',width:480}}>
+            <div style={{fontSize:7,color:theme.textMuted,letterSpacing:3,marginBottom:10}}>SYSTEM STATUS</div>
+
+            {/* Two-column layout */}
+            <div style={{display:'flex',gap:0}}>
+
+              {/* LEFT — Hardware + Network */}
+              <div style={{flex:'0 0 auto',paddingRight:18,display:'flex',flexDirection:'column',gap:7}}>
+                {[
+                  ['CPU ', sys.cpu, '%', cpuC],
+                  ['TEMP', sys.temp, 'C', tempC],
+                  ['RAM ', Math.round(sys.ramUsed/sys.ramTotal*100), '%', '#00ffcc'],
+                ].map(([lbl,val,unit,col])=>(
+                  <div key={lbl} style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:7,color:theme.textSecondary,letterSpacing:2,width:32,flexShrink:0}}>{lbl}</span>
+                    {bar(val,10)}
+                    <span style={{fontSize:7,color:col,letterSpacing:1,width:28,textAlign:'right',flexShrink:0}}>{val}{unit}</span>
+                  </div>
+                ))}
+                {/* divider */}
+                <div style={{height:1,background:theme.border,margin:'3px 0'}}/>
+                {/* Network */}
+                <div style={{display:'flex',alignItems:'center',gap:7}}>
+                  <span style={{fontSize:7,color:theme.textSecondary,letterSpacing:2,width:32,flexShrink:0}}>NET</span>
+                  <span style={{width:5,height:5,background:'#00ff66',display:'inline-block',flexShrink:0,boxShadow:'0 0 5px #00ff6690'}}/>
+                  <span style={{fontSize:7,color:'#00ff66',letterSpacing:2}}>ONLINE</span>
+                </div>
+              </div>
+
+              {/* Vertical divider */}
+              <div style={{width:1,background:theme.border,margin:'0 18px 0 0',flexShrink:0}}/>
+
+              {/* RIGHT — LLM Backends */}
+              <div style={{flex:1,display:'flex',flexDirection:'column',gap:7}}>
+
+                {[
+                  {label:'RPI',    sub:'gemma3-4b',  online:true,  active:false},
+                  {label:'GPU',    sub:'phi-4-mini', online:true,  active:true},
+                  {label:'CLAUDE', sub:'3.5-sonnet', online:true,  active:false},
+                  {label:'GEMINI', sub:'2.0-flash',  online:false, active:false},
+                ].map(({label,sub,online,active})=>(
+                  <div key={label} style={{display:'flex',alignItems:'center',gap:7}}>
+                    <span style={{fontSize:7,color:theme.textSecondary,letterSpacing:1,width:46,flexShrink:0}}>{label}</span>
+                    <span style={{
+                      width:5,height:5,flexShrink:0,display:'inline-block',
+                      background:online?'#00ff66':'#ff4444',
+                      boxShadow:online?'0 0 4px #00ff6680':'0 0 4px #ff444480',
+                    }}/>
+                    <span style={{fontSize:7,color:online?'#00ff66':'#ff4444',letterSpacing:1,width:44,flexShrink:0}}>{online?'ONLINE':'OFFLIN'}</span>
+                    <span style={{fontSize:6,color:theme.textMuted,letterSpacing:1,flex:1}}>{sub}</span>
+                    {active && (
+                      <span style={{
+                        fontSize:6,color:theme.accent,letterSpacing:2,flexShrink:0,
+                        border:`1px solid ${theme.accent}`,padding:'1px 4px',
+                        boxShadow:`0 0 5px ${theme.accent}50`,
+                      }}>ACT</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </PixelBox>
+
+          {/* READY PROMPT — flush below the box, cursor right after text */}
+          <div style={{
+            width:'100%',
+            background:'#020210',
+            border:`2px solid ${theme.border}`,
+            borderTop:'none',
+            padding:'9px 20px',
+            display:'flex',alignItems:'center',gap:0,
+          }}>
+            <span style={{fontSize:8,color:theme.accent,letterSpacing:1,marginRight:8}}>{'>'}</span>
+            <span style={{fontSize:8,color:theme.accent,letterSpacing:3}}>AWAITING INPUT</span>
+            <span style={{
+              display:'inline-block',width:9,height:13,
+              background:theme.accent,marginLeft:3,
+              opacity:blink?1:0,transition:'none',
+              verticalAlign:'middle',
+            }}/>
+          </div>
+        </div>
+      </div>
+
+      {/* BOTTOM BAR */}
+      <div style={{
+        height:32,background:'#000820',
+        borderTop:`2px solid ${theme.border}`,
+        display:'flex',alignItems:'center',padding:'0 16px',gap:0,
+      }}>
+        <span style={{fontSize:7,color:theme.textMuted,letterSpacing:2}}>IP <span style={{color:'#00ffcc'}}>192.168.1.42</span></span>
+        <span style={{color:theme.border,margin:'0 12px'}}>│</span>
+        <span style={{fontSize:7,color:theme.textMuted,letterSpacing:2}}>UPTIME <span style={{color:'#00ffcc'}}>{uptimeStr}</span></span>
+        {radio && <>
+          <span style={{color:theme.border,margin:'0 12px'}}>│</span>
+          <span style={{fontSize:7,color:'#4fc3f7',letterSpacing:1,display:'flex',alignItems:'center',gap:5}}>
+            <span style={{opacity:blink?1:0.2}}>♪</span>
+            <span>{radio}</span>
+          </span>
+        </>}
+        <div style={{flex:1}}/>
+        <span style={{color:theme.border,margin:'0 14px'}}>│</span>
+        <span style={{fontSize:7,color:getStateStyle('IDLE',theme.id).fg,letterSpacing:2,display:'flex',alignItems:'center',gap:6}}>
+          <span style={{width:6,height:6,background:getStateStyle('IDLE',theme.id).fg,display:'inline-block',opacity:blink?1:0.3}}/>
+          IDLE
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── RETRO ACTIVE SCREEN ──
+function RetroActiveScreen({theme,time,sys,fsm,modelKey,radio,transcript,tools,response,streamDone,latency}){
+  const hh=time.getHours().toString().padStart(2,'0');
+  const mm=time.getMinutes().toString().padStart(2,'0');
+  const s = getStateStyle(fsm, theme.id);
+  const m = MODELS[modelKey];
+  const logRef=useRef(null);
+  const [blink,setBlink]=useState(true);
+  useEffect(()=>{const id=setInterval(()=>setBlink(v=>!v),530);return()=>clearInterval(id);},[]);
+  useEffect(()=>{if(logRef.current)logRef.current.scrollTop=logRef.current.scrollHeight;},[response,tools]);
+
+  return (
+    <div className="pixel-flicker" style={{
+      width:800,height:480,background:theme.bg,
+      fontFamily:theme.mono,display:'flex',flexDirection:'column',
+      overflow:'hidden',position:'relative',
+    }}>
+      <Scanlines heavy/>
+
+      {/* TOP STATUS BAR */}
+      <div style={{
+        height:40,background:'#000820',
+        borderBottom:`2px solid ${s.fg}`,
+        display:'flex',alignItems:'center',padding:'0 14px',gap:0,flexShrink:0,
+        boxShadow:`0 2px 8px ${s.fg}50`,
+      }}>
+        {/* State tag */}
+        <div style={{
+          background:s.bg,border:`2px solid ${s.fg}`,
+          padding:'3px 10px',
+          fontSize:8,color:s.fg,letterSpacing:2,
+          boxShadow:`0 0 10px ${s.fg}60, inset 0 0 6px ${s.fg}20`,
+          display:'flex',alignItems:'center',gap:8,
+        }}>
+          <span style={{
+            width:6,height:6,background:s.fg,display:'inline-block',flexShrink:0,
+            animation: fsm==='LISTENING'||fsm==='THINKING' ? 'softpulse 0.9s ease-in-out infinite':'none',
+          }}/>
+          {s.label}
+        </div>
+
+        <div style={{width:12}}/>
+
+        {/* Model */}
+        <div style={{
+          border:`1px solid ${m.fg}60`,padding:'3px 8px',
+          fontSize:7,color:m.fg,letterSpacing:2,
+        }}>
+          {m.label.replace(/^[^ ]+ /,'')} / {m.sub.toUpperCase()}
+        </div>
+
+        <div style={{flex:1}}/>
+
+        {/* Time */}
+        <span style={{fontSize:9,color:theme.textSecondary,letterSpacing:4}}>{hh}:{mm}</span>
+      </div>
+
+      {/* USER INPUT LINE */}
+      <div style={{
+        height:40,padding:'0 14px',
+        display:'flex',alignItems:'center',
+        background:'#040414',
+        borderBottom:`1px solid ${theme.border}`,
+        flexShrink:0,
+      }}>
+        <span style={{fontSize:8,color:theme.accent,marginRight:10,letterSpacing:1}}>&gt;</span>
+        {transcript ? (
+          <span style={{fontSize:8,color:theme.textPrimary,letterSpacing:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            {transcript}
+          </span>
+        ) : (
+          <span style={{
+            fontSize:8,color:theme.textMuted,letterSpacing:2,
+            animation: fsm==='LISTENING'?'softpulse 0.9s ease-in-out infinite':'none',
+          }}>
+            {fsm==='LISTENING'?'RECORDING...':'---'}
+          </span>
+        )}
+        {fsm==='LISTENING' && (
+          <span style={{marginLeft:6,fontSize:8,color:'#00ff66',opacity:blink?1:0.1}}>█</span>
+        )}
+      </div>
+
+      {/* LOG AREA */}
+      <div ref={logRef} className="no-scrollbar" style={{
+        flex:1,background:theme.surface,
+        padding:'12px 14px',
+        display:'flex',flexDirection:'column',gap:0,
+        overflowY:'auto',
+        borderLeft:`2px solid ${theme.border}`,
+        borderRight:`2px solid ${theme.border}`,
+      }}>
+        {/* Thinking indicator */}
+        {fsm==='THINKING' && tools.length===0 && !response && (
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+            <span style={{fontSize:7,color:'#ffcc00',letterSpacing:2,animation:'softpulse 1s ease-in-out infinite'}}>PROCESSING</span>
+            <span style={{fontSize:7,color:'#ffcc00',letterSpacing:4,animation:'softpulse 1s ease-in-out 0.2s infinite'}}>...</span>
+          </div>
+        )}
+
+        {/* Tool calls */}
+        {tools.map((tool,i)=>(
+          <div key={i} className="fade-in" style={{
+            marginBottom:6,
+            border:`1px solid ${tool.done?'#00ff6640':'#ffcc0040'}`,
+            padding:'6px 10px',
+            background:tool.done?'#001808':'#100c00',
+          }}>
+            <div style={{fontSize:7,color:tool.done?'#00ff66':'#ffcc00',letterSpacing:2,marginBottom:3}}>
+              {tool.done?'[DONE]':'[EXEC]'} {tool.name.toUpperCase()}
+            </div>
+            {tool.done && (
+              <div style={{fontSize:7,color:theme.textSecondary,letterSpacing:1}}>{tool.result}</div>
+            )}
+          </div>
+        ))}
+
+        {tools.length>0 && response && (
+          <div style={{height:1,background:theme.border,margin:'6px 0 8px',borderTop:`1px dashed ${theme.border}`}}/>
+        )}
+
+        {/* Response */}
+        {response && (
+          <div className="fade-in">
+            <div style={{fontSize:7,color:theme.accent,letterSpacing:2,marginBottom:8}}>SYS OUTPUT:</div>
+            <div style={{
+              fontSize:11,color:theme.textPrimary,lineHeight:2.2,letterSpacing:1,
+              textShadow:`0 0 10px ${theme.textPrimary}60`,
+            }}>
+              {response}
+              {!streamDone && (
+                <span style={{opacity:blink?1:0,marginLeft:4}}>█</span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* BOTTOM STATS BAR */}
+      <div style={{
+        height:36,background:'#000820',
+        borderTop:`2px solid ${theme.border}`,
+        display:'flex',alignItems:'center',
+        padding:'0 14px',gap:0,flexShrink:0,
+      }}>
+        {[
+          ['CPU', `${sys.cpu}%`],
+          ['TMP', `${sys.temp}C`],
+          ['STT', latency.stt?`${latency.stt}MS`:'---'],
+          ['TPS', latency.tps?`${latency.tps}`:'---'],
+        ].map(([k,v],i)=>(
+          <React.Fragment key={k}>
+            {i>0 && <span style={{color:theme.border,margin:'0 10px'}}>|</span>}
+            <span style={{fontSize:7,color:theme.textMuted,letterSpacing:1,marginRight:4}}>{k}:</span>
+            <span style={{fontSize:7,color:theme.textSecondary,letterSpacing:1}}>{v}</span>
+          </React.Fragment>
+        ))}
+        <div style={{flex:1}}/>
+        {radio && <>
+          <span style={{color:theme.border,margin:'0 10px'}}>|</span>
+          <span style={{fontSize:7,color:'#4fc3f7',letterSpacing:1,display:'flex',alignItems:'center',gap:5}}>
+            <span style={{opacity:blink?1:0.2}}>♪</span>
+            <span style={{maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{radio.slice(0,24)}</span>
+          </span>
+          <span style={{color:theme.border,margin:'0 10px'}}>|</span>
+        </>}
+        <span style={{fontSize:7,color:theme.textMuted,letterSpacing:2}}>POONDYK.SYS READY</span>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCALE WRAPPER
+// ─────────────────────────────────────────────────────────────────────────────
+function ScaledStage({children}){
+  const [scale,setScale]=useState(1);
+  useEffect(()=>{
+    const upd=()=>setScale(Math.min(window.innerWidth/800,window.innerHeight/480)*0.98);
+    upd(); window.addEventListener('resize',upd); return()=>window.removeEventListener('resize',upd);
+  },[]);
+  return (
+    <div style={{width:800,height:480,transform:`scale(${scale})`,transformOrigin:'center center',flexShrink:0}}>
+      {children}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TWEAKS PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+function TweaksPanel({cfg,setCfg,onClose,onAddToast}){
+  const P={fontFamily:"'JetBrains Mono',monospace"};
+  const row={display:'flex',alignItems:'center',gap:8,marginBottom:5,cursor:'pointer'};
+  const label={fontSize:12,color:'#9090b0'};
+  const head={fontSize:9,color:'#44445a',letterSpacing:'0.12em',marginBottom:7,marginTop:4};
+  return (
+    <div style={{
+      position:'fixed',bottom:20,right:16,zIndex:9999,
+      background:'#14142a',border:'1px solid #24244a',borderRadius:14,
+      padding:'14px 16px',width:232,
+      boxShadow:'0 12px 48px rgba(0,0,0,0.7)',
+      ...P,
+    }}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <span style={{fontSize:13,fontWeight:600,color:'#d0d0f0'}}>Tweaks</span>
+        <button onClick={onClose} style={{background:'none',border:'none',color:'#44445a',cursor:'pointer',fontSize:18,lineHeight:1}}>×</button>
+      </div>
+
+      <div style={{...head}}>VISUAL STYLE</div>
+      {Object.values(THEMES).map(t=>(
+        <label key={t.id} style={{...row}}>
+          <input type="radio" name="theme" checked={cfg.theme===t.id} onChange={()=>setCfg(p=>({...p,theme:t.id}))}/>
+          <span style={{...label}}>{t.name}</span>
+        </label>
+      ))}
+
+      <div style={{height:1,background:'#24244a',margin:'10px 0'}}/>
+      <div style={{...head}}>MODEL BACKEND</div>
+      {Object.entries(MODELS).map(([k,m])=>(
+        <label key={k} style={{...row}}>
+          <input type="radio" name="model" checked={cfg.model===k} onChange={()=>setCfg(p=>({...p,model:k}))}/>
+          <span style={{...label,color:m.fg+'cc'}}>{m.label} <span style={{color:'#5a5a7a'}}>{m.sub}</span></span>
+        </label>
+      ))}
+
+      <div style={{height:1,background:'#24244a',margin:'10px 0'}}/>
+      <div style={{...head}}>OPTIONS</div>
+      <label style={{...row}}>
+        <input type="checkbox" checked={cfg.radio} onChange={e=>setCfg(p=>({...p,radio:e.target.checked}))}/>
+        <span style={{...label}}>Radio playing</span>
+      </label>
+      <label style={{...row}}>
+        <input type="checkbox" checked={cfg.autoDemo} onChange={e=>setCfg(p=>({...p,autoDemo:e.target.checked}))}/>
+        <span style={{...label}}>Auto-demo cycle</span>
+      </label>
+
+      <div style={{height:1,background:'#24244a',margin:'10px 0'}}/>
+      <div style={{...head}}>NOTIFICATIONS</div>
+      {[
+        {type:'timer',   title:'Pizza timer',       subtitle:'Ready in 3 min'},
+        {type:'reminder',title:'Team standup',      subtitle:'14:00 · 8 min away'},
+        {type:'alarm',   title:'Medication',        subtitle:'Daily · 14:05'},
+      ].map((t,i)=>(
+        <button key={i} onClick={()=>onAddToast({...t,duration:7000})} style={{
+          display:'block',width:'100%',textAlign:'left',
+          background:'#1e1e36',border:'1px solid #2a2a4a',borderRadius:6,
+          padding:'5px 8px',marginBottom:5,cursor:'pointer',
+          fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:'#8888b0',
+        }}>
+          {TOAST_ICONS[t.type]?.icon} {t.title}
+        </button>
+      ))}
+
+      <div style={{marginTop:12,fontSize:10,color:'#32325a',lineHeight:1.5}}>
+        Click screen to advance states<br/>
+        A=Idle · L=Listening · T=Thinking · S=Speaking
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEMO SIMULATION
+// ─────────────────────────────────────────────────────────────────────────────
+const DEMO_Q  = "What's the weather tomorrow morning?";
+const DEMO_RESPONSE = "Tomorrow morning in Wrocław will be partly cloudy with a high of 13°C and low of 5°C. Wind from the west at 14 km/h — bring a jacket.";
+const DEMO_TOOL = {name:'get_weather', result:'Wrocław: 13°C / 5°C, partly cloudy'};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// APP
+// ─────────────────────────────────────────────────────────────────────────────
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "theme": "retro",
+  "model": "RPi",
+  "radio": false,
+  "autoDemo": true
+}/*EDITMODE-END*/;
+
+function App(){
+  const time = useClock();
+  const [cfg,setCfg]   = useState(TWEAK_DEFAULTS);
+  const [showTweaks,setShowTweaks] = useState(false);
+
+  // FSM demo state
+  const [fsmIdx,setFsmIdx]   = useState(0);
+  const [screen,setScreen]   = useState('idle');
+  const [transcript,setTx]   = useState('');
+  const [tools,setTools]     = useState([]);
+  const [response,setResp]   = useState('');
+  const [streamDone,setDone] = useState(true);
+  const [latency,setLat]     = useState({stt:null,ttft:null,tps:null});
+  const [toasts,setToasts]   = useState([]);
+  const autoTimer = useRef(null);
+  const streamTimers = useRef([]);
+  const toastCounter = useRef(0);
+
+  const addToast = useCallback((toast)=>{
+    const id = ++toastCounter.current;
+    setToasts(prev=>[...prev, {...toast, id}]);
+  },[]);
+
+  const dismissToast = useCallback((id)=>{
+    setToasts(prev=>prev.filter(t=>t.id!==id));
+  },[]);
+
+  const fsm = FSM_CYCLE[fsmIdx];
+  const theme = THEMES[cfg.theme];
+  const sys = {cpu:78, temp:68, ramUsed:3806, ramTotal:16219};
+  const radio = cfg.radio ? 'Radio Złote Przeboje FM' : null;
+
+  const clearStream = ()=>{ streamTimers.current.forEach(clearTimeout); streamTimers.current=[]; };
+
+  const advance = useCallback(()=>{
+    clearTimeout(autoTimer.current);
+    clearStream();
+    setFsmIdx(prev=>{
+      const next=(prev+1)%FSM_CYCLE.length;
+      const nextFsm=FSM_CYCLE[next];
+      if(nextFsm==='IDLE'){
+        setScreen('idle'); setTx(''); setTools([]); setResp(''); setDone(true);
+        setLat({stt:null,ttft:null,tps:null});
+      } else if(nextFsm==='LISTENING'){
+        setScreen('active'); setTx(''); setTools([]); setResp(''); setDone(true);
+        streamTimers.current.push(setTimeout(()=>setTx(DEMO_Q),700));
+      } else if(nextFsm==='THINKING'){
+        setLat(l=>({...l,stt:338}));
+        streamTimers.current.push(setTimeout(()=>{
+          setTools([{name:DEMO_TOOL.name,result:DEMO_TOOL.result,done:false}]);
+          streamTimers.current.push(setTimeout(()=>{
+            setTools([{name:DEMO_TOOL.name,result:DEMO_TOOL.result,done:true}]);
+          },900));
+        },400));
+      } else if(nextFsm==='SPEAKING'){
+        setLat(l=>({...l,ttft:1.2,tps:8.3}));
+        setDone(false);
+        const words=DEMO_RESPONSE.split(' ');
+        let cur='';
+        words.forEach((w,i)=>{
+          streamTimers.current.push(setTimeout(()=>{
+            cur+=(cur?' ':'')+w;
+            setResp(cur);
+            if(i===words.length-1) setDone(true);
+          },i*105));
+        });
+      }
+      return next;
+    });
+  },[]);
+
+  // Auto demo timing
+  const STATE_DWELL = {IDLE:3200,LISTENING:2400,THINKING:2900,SPEAKING:6200};
+  useEffect(()=>{
+    if(!cfg.autoDemo) return;
+    autoTimer.current=setTimeout(advance, STATE_DWELL[fsm]);
+    return()=>clearTimeout(autoTimer.current);
+  },[cfg.autoDemo,fsm,advance]);
+
+  // Demo toasts on load
+  useEffect(()=>{
+    const t1 = setTimeout(()=>addToast({type:'timer',   title:'Pizza timer',      subtitle:'Ready in 3 minutes',         duration:8000}), 1500);
+    const t2 = setTimeout(()=>addToast({type:'reminder',title:'Team standup',     subtitle:'Today · 14:00  in 8 minutes', duration:9000}), 4000);
+    const t3 = setTimeout(()=>addToast({type:'alarm',   title:'Medication reminder',subtitle:'Daily · 14:05',            duration:7000}), 7000);
+    return ()=>{clearTimeout(t1);clearTimeout(t2);clearTimeout(t3);};
+  },[]);
+
+  // Tweaks protocol
+  useEffect(()=>{
+    const handler=e=>{
+      if(e.data?.type==='__activate_edit_mode') setShowTweaks(true);
+      if(e.data?.type==='__deactivate_edit_mode') setShowTweaks(false);
+    };
+    window.addEventListener('message',handler);
+    window.parent.postMessage({type:'__edit_mode_available'},'*');
+    return()=>window.removeEventListener('message',handler);
+  },[]);
+
+  return (
+    <div style={{width:'100%',height:'100%',background:'#000',display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:0}}>
+
+
+      <ScaledStage>
+        <div onClick={advance} style={{cursor:'default',userSelect:'none',position:'relative'}}>
+          {theme.pixel ? (
+            screen==='idle'
+              ? <RetroIdleScreen theme={theme} time={time} sys={sys} radio={radio}/>
+              : <RetroActiveScreen theme={theme} time={time} sys={sys} fsm={fsm}
+                  modelKey={cfg.model} radio={radio} transcript={transcript} tools={tools}
+                  response={response} streamDone={streamDone} latency={latency}/>
+          ) : screen==='idle'
+            ? <IdleScreen theme={theme} time={time} sys={sys} radio={radio}/>
+            : <ActiveScreen theme={theme} time={time} sys={sys} fsm={fsm}
+                modelKey={cfg.model} radio={radio}
+                transcript={transcript} tools={tools} response={response}
+                streamDone={streamDone} latency={latency}/>
+          }
+          <ToastOverlay toasts={toasts} theme={theme} onDismiss={dismissToast}/>
+        </div>
+      </ScaledStage>
+
+
+      {showTweaks && (
+        <TweaksPanel cfg={cfg} setCfg={setCfg} onAddToast={addToast} onClose={()=>{
+          setShowTweaks(false);
+          window.parent.postMessage({type:'__edit_mode_dismissed'},'*');
+        }}/>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

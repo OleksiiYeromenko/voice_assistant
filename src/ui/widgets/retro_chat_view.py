@@ -1,24 +1,34 @@
-"""Retro-theme chat view: terminal-style user input line + scrolling log."""
+"""Retro-theme chat view: terminal input line + scrolling log area.
 
+Spec: docs/design/design_handoff_retro_ui/README.md — Screen 2 / Active
+"""
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QTextEdit, QVBoxLayout, QWidget
 
 from src.ui import theme as T
 
-_FONT = "DejaVu Sans Mono"
-_TOOL_RUNNING_COLOR = "#ffcc00"
-_TOOL_DONE_COLOR = "#00ff66"
-_RESPONSE_COLOR = T.RETRO_TEXT_PRIMARY
-_TOOL_FONT_PX = 18
-_RESPONSE_FONT_PX = 26
+_FONT = "Press Start 2P"
+_FB = "DejaVu Sans Mono"
+
+# Font pixel sizes matching spec
+_FZ_TOOL = 11    # spec 7px — tool status rows
+_FZ_RESP = 15    # spec 11px — response text
+_FZ_INPUT = 11   # spec 8px — user input line
+
+
+def _ss(color: str, size: int, spacing: int = 1) -> str:
+    return (
+        f"color: {color}; font-family: '{_FONT}', '{_FB}'; "
+        f"font-size: {size}px; letter-spacing: {spacing}px; background: transparent;"
+    )
 
 
 class RetroConversationLog(QTextEdit):
-    """Retro-styled scrolling log: tool events + LLM response.
+    """Retro scrolling log: tool events + LLM response text.
 
     Tool calls are boxed with [EXEC]/[DONE] prefixes.
-    Response text uses primary green with 'SYS OUTPUT:' header.
+    Response text uses 'SYS OUTPUT:' header with cyan text.
     """
 
     def __init__(self, parent=None):
@@ -26,16 +36,17 @@ class RetroConversationLog(QTextEdit):
         self.setReadOnly(True)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.document().setDocumentMargin(12)
+        self.document().setDocumentMargin(14)
         self.setStyleSheet(
             f"QTextEdit {{ background-color: {T.RETRO_SURFACE}; color: {T.RETRO_TEXT_PRIMARY}; "
-            f"border: none; font-family: '{_FONT}'; font-size: {_TOOL_FONT_PX}px; }}"
+            f"border-left: 2px solid {T.RETRO_BORDER}; border-right: 2px solid {T.RETRO_BORDER}; "
+            f"border-top: none; border-bottom: none; "
+            f"font-family: '{_FONT}', '{_FB}'; font-size: {_FZ_TOOL}px; line-height: 1.8; }}"
         )
         self._tool_cursors: dict[str, QTextCursor] = {}
         self._has_tool_content = False
         self._response_started = False
         self._blink_on = True
-        self._blink_cursor_pos: int | None = None
 
         self._blink_timer = QTimer(self)
         self._blink_timer.setInterval(530)
@@ -48,16 +59,17 @@ class RetroConversationLog(QTextEdit):
         cursor.movePosition(QTextCursor.MoveOperation.End)
 
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor(_TOOL_RUNNING_COLOR))
-        _f = QFont(_FONT)
-        _f.setPixelSize(_TOOL_FONT_PX)
-        _f.setWeight(QFont.Weight.Bold)
-        fmt.setFont(_f)
+        fmt.setForeground(QColor("#ffcc00"))
+        f = QFont(_FONT)
+        f.setPixelSize(_FZ_TOOL)
+        f.setWeight(QFont.Weight.Bold)
+        fmt.setFont(f)
 
         cursor.insertText(f"[EXEC] {name.upper()}\n", fmt)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
 
+        # Save cursor position so we can update this line when done
         saved = QTextCursor(self.document())
         saved.movePosition(QTextCursor.MoveOperation.End)
         saved.movePosition(QTextCursor.MoveOperation.PreviousBlock)
@@ -71,13 +83,13 @@ class RetroConversationLog(QTextEdit):
         if saved is None:
             return
 
-        short = result[:72] + "…" if len(result) > 72 else result
+        short = result[:68] + "…" if len(result) > 68 else result
         new_text = f"[DONE] {name.upper()}  {short}" if short else f"[DONE] {name.upper()}"
 
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor(_TOOL_DONE_COLOR))
+        fmt.setForeground(QColor("#00ff66"))
         f = QFont(_FONT)
-        f.setPixelSize(_TOOL_FONT_PX)
+        f.setPixelSize(_FZ_TOOL)
         fmt.setFont(f)
 
         saved.removeSelectedText()
@@ -91,26 +103,33 @@ class RetroConversationLog(QTextEdit):
             self._response_started = True
             cursor = self.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
+
             # Dashed divider
             div_fmt = QTextCharFormat()
             div_fmt.setForeground(QColor(T.RETRO_BORDER))
             f = QFont(_FONT)
-            f.setPixelSize(_TOOL_FONT_PX)
+            f.setPixelSize(_FZ_TOOL)
             div_fmt.setFont(f)
-            cursor.insertText("\n" + "─" * 40 + "\n", div_fmt)
-            # "SYS OUTPUT:" header
+            cursor.insertText("\n" + "─" * 36 + "\n", div_fmt)
+
+            # SYS OUTPUT: header
             hdr_fmt = QTextCharFormat()
             hdr_fmt.setForeground(QColor(T.RETRO_ACCENT))
+            hdr_f = QFont(_FONT)
+            hdr_f.setPixelSize(_FZ_TOOL)
+            hdr_fmt.setFont(hdr_f)
             cursor.insertText("SYS OUTPUT:\n", hdr_fmt)
             self.setTextCursor(cursor)
 
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
+
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor(_RESPONSE_COLOR))
+        fmt.setForeground(QColor(T.RETRO_TEXT_PRIMARY))
         f = QFont(_FONT)
-        f.setPixelSize(_RESPONSE_FONT_PX)
+        f.setPixelSize(_FZ_RESP)
         fmt.setFont(f)
+
         cursor.insertText(token, fmt)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
@@ -131,17 +150,18 @@ class RetroConversationLog(QTextEdit):
         self._blink_timer.stop()
 
     def _blink_tick(self):
-        pass  # blink cursor handled by append_token's trailing █ if needed
+        pass  # streaming cursor placeholder — visual handled by token's trailing █ if needed
 
 
 class RetroChatView(QWidget):
-    """Retro chat area: 40px terminal input line + flex ConversationLog."""
+    """Retro chat area: 40px user input line + flex ConversationLog."""
 
     def __init__(self, bus, parent=None):
         super().__init__(parent)
 
         self._fsm_state = "IDLE"
         self._blink = True
+
         self._blink_timer = QTimer(self)
         self._blink_timer.setInterval(530)
         self._blink_timer.timeout.connect(self._tick_blink)
@@ -150,39 +170,31 @@ class RetroChatView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── User input line (52px) ───────────────────────────────────────────
+        # ── User input line (h:40) ───────────────────────────────────────────
         input_row = QWidget()
-        input_row.setFixedHeight(52)
+        input_row.setFixedHeight(40)
         input_row.setStyleSheet(
             f"background-color: #040414; border-bottom: 1px solid {T.RETRO_BORDER};"
         )
-        ir_layout = QHBoxLayout(input_row)
-        ir_layout.setContentsMargins(18, 0, 18, 0)
-        ir_layout.setSpacing(0)
+        ir_lay = QHBoxLayout(input_row)
+        ir_lay.setContentsMargins(16, 0, 16, 0)
+        ir_lay.setSpacing(0)
 
         self._prompt_sym = QLabel(">")
-        self._prompt_sym.setFixedWidth(26)
-        self._prompt_sym.setStyleSheet(
-            f"color: {T.RETRO_ACCENT}; font-family: '{_FONT}'; "
-            f"font-size: 16px; letter-spacing: 1px;"
-        )
+        self._prompt_sym.setFixedWidth(20)
+        self._prompt_sym.setStyleSheet(_ss(T.RETRO_ACCENT, _FZ_INPUT, 0))
 
         self._input_lbl = QLabel()
-        self._input_lbl.setStyleSheet(
-            f"color: {T.RETRO_TEXT_PRIMARY}; font-family: '{_FONT}'; "
-            f"font-size: 16px; letter-spacing: 1px;"
-        )
+        self._input_lbl.setStyleSheet(_ss(T.RETRO_TEXT_PRIMARY, _FZ_INPUT, 1))
 
         self._cursor_lbl = QLabel("█")
-        self._cursor_lbl.setStyleSheet(
-            f"color: #00ff66; font-family: '{_FONT}'; font-size: 16px;"
-        )
+        self._cursor_lbl.setStyleSheet(_ss("#00ff66", _FZ_INPUT, 0))
         self._cursor_lbl.setVisible(False)
 
-        ir_layout.addWidget(self._prompt_sym)
-        ir_layout.addSpacing(6)
-        ir_layout.addWidget(self._input_lbl, stretch=1)
-        ir_layout.addWidget(self._cursor_lbl)
+        ir_lay.addWidget(self._prompt_sym)
+        ir_lay.addSpacing(8)
+        ir_lay.addWidget(self._input_lbl, stretch=1)
+        ir_lay.addWidget(self._cursor_lbl)
 
         # ── Log area ─────────────────────────────────────────────────────────
         self._log = RetroConversationLog(self)
@@ -202,10 +214,7 @@ class RetroChatView(QWidget):
 
     def _on_user_said(self, text: str):
         self._input_lbl.setText(text)
-        self._input_lbl.setStyleSheet(
-            f"color: {T.RETRO_TEXT_PRIMARY}; font-family: '{_FONT}'; "
-            f"font-size: 16px; letter-spacing: 1px;"
-        )
+        self._input_lbl.setStyleSheet(_ss(T.RETRO_TEXT_PRIMARY, _FZ_INPUT, 1))
         self._cursor_lbl.setVisible(False)
         self._blink_timer.stop()
 
@@ -214,25 +223,27 @@ class RetroChatView(QWidget):
         if state_name == "LISTENING":
             self._log.clear_log()
             self._input_lbl.setText("RECORDING...")
-            self._input_lbl.setStyleSheet(
-                f"color: {T.RETRO_TEXT_MUTED}; font-family: '{_FONT}'; "
-                f"font-size: 16px; letter-spacing: 2px;"
-            )
+            self._input_lbl.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _FZ_INPUT, 2))
             self._cursor_lbl.setVisible(True)
             self._blink_timer.start()
         elif state_name == "THINKING":
             self._cursor_lbl.setVisible(False)
             self._blink_timer.stop()
-            # Show PROCESSING in log
+            # Show PROCESSING indicator in log
             fmt = QTextCharFormat()
             fmt.setForeground(QColor("#ffcc00"))
             f = QFont(_FONT)
-            f.setPixelSize(_TOOL_FONT_PX)
+            f.setPixelSize(_FZ_TOOL)
             fmt.setFont(f)
             cursor = self._log.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
             cursor.insertText("PROCESSING...\n", fmt)
             self._log.setTextCursor(cursor)
+        elif state_name == "IDLE":
+            # Show placeholder when inactive
+            if not self._input_lbl.text() or self._input_lbl.text() == "RECORDING...":
+                self._input_lbl.setText("---")
+                self._input_lbl.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _FZ_INPUT, 1))
 
     def _tick_blink(self):
         self._blink = not self._blink
