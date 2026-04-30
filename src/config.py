@@ -7,6 +7,25 @@ from typing import Any
 import yaml
 
 _DEFAULT_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
+_DOTENV_PATH = Path(__file__).parent.parent / ".env"
+
+
+def _load_dotenv() -> None:
+    """Load KEY=VALUE pairs from .env into os.environ (does not overwrite existing vars)."""
+    if not _DOTENV_PATH.exists():
+        return
+    for line in _DOTENV_PATH.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip().removeprefix("export").strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+
+_load_dotenv()
 
 
 def _apply_env_override(cfg: dict[str, Any], parts: list[str], val: str) -> None:

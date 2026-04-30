@@ -272,29 +272,39 @@ def test_router():
     return all_pass
 
 
-def test_pipeline():
+def test_pipeline(query: str | None = None):
     """Full pipeline: text → system prompt → LLM → tool loop → answer (no STT/TTS)."""
     print("\n" + "=" * 50)
     print("Testing pipeline (text → LLM → tools → answer)")
     print("=" * 50)
     from src.config import load_config
-    from src.llm.backends import OllamaBackend
+    from src.llm.backends import LlamaCppBackend, OllamaBackend, check_ollama_connectivity
     from src.tools.executor import ALL_TOOLS, execute_tool
 
     cfg = load_config()
     model_cfg = cfg["llm"]["local"]
+    remote_url = cfg["llm"].get("remote_base_url", "http://192.168.1.74:11434")
     local_url = cfg["llm"].get("local_base_url", "http://localhost:11434")
 
-    backend = OllamaBackend(
-        model=model_cfg["model"],
-        base_url=local_url,
-        temperature=model_cfg["temperature"],
-        num_ctx=model_cfg["num_ctx"],
-        num_predict=model_cfg.get("num_predict"),
-        num_thread=model_cfg.get("num_thread"),
-        think=model_cfg.get("think", False),
-        label="local",
-    )
+    if check_ollama_connectivity(remote_url):
+        backend = OllamaBackend(
+            model=model_cfg["model"],
+            base_url=remote_url,
+            temperature=model_cfg["temperature"],
+            num_ctx=model_cfg["num_ctx"],
+            num_predict=model_cfg.get("num_predict"),
+            num_thread=model_cfg.get("num_thread"),
+            think=model_cfg.get("think", False),
+            label="remote",
+        )
+    else:
+        backend = LlamaCppBackend(
+            base_url=local_url,
+            model=model_cfg.get("model", ""),
+            temperature=model_cfg["temperature"],
+            num_predict=model_cfg.get("num_predict"),
+            label="local",
+        )
     print(f"  Backend: {backend.name}")
 
     # Build system prompt (with memory context, matching production)
@@ -308,19 +318,24 @@ def test_pipeline():
         print(f"  Memory unavailable ({e}), using fallback prompt")
         system = "You are a helpful voice assistant. Be concise."
 
-    query = "What time is it in London?"
+    query = query or "What time is it in London?"
     messages = [{"role": "user", "content": query}]
     print(f"  Query: '{query}'")
 
-    MAX_ROUNDS = 5
+    MAX_ROUNDS = 3  # matches MAX_TOOL_ROUNDS in main.py
     t0 = time.time()
     final_text = ""
+    tools_used: set[str] = set()
 
     for round_num in range(MAX_ROUNDS):
         text = ""
         tool_calls = []
+        # LlamaCppBackend uses cache_prompt keyed on the full prefix (including tools).
+        # Dropping tools on round 2 busts the cache and causes a full re-prefill (~10x slower).
+        # For OllamaBackend, suppress tools after first use to prevent degenerate empty responses.
+        stream_tools = ALL_TOOLS if (not tools_used or isinstance(backend, LlamaCppBackend)) else None
 
-        for chunk in backend.stream(messages, tools=ALL_TOOLS, system=system):
+        for chunk in backend.stream(messages, tools=stream_tools, system=system):
             text += chunk.text
             tool_calls.extend(chunk.tool_calls)
 
@@ -335,7 +350,8 @@ def test_pipeline():
             })
             for tc in tool_calls:
                 print(f"  Round {round_num + 1} tool: {tc.name}({tc.arguments})")
-                result = execute_tool(tc.name, tc.arguments)
+                tools_used.add(tc.name)
+                result = execute_tool(tc.name, tc.arguments, backend=backend)
                 print(f"    → {result}")
                 messages.append({
                     "role": "tool",
@@ -346,6 +362,13 @@ def test_pipeline():
 
         final_text = text.strip()
         break
+
+    # Force one final no-tool call if rounds exhausted without a text response
+    if not final_text and tools_used:
+        print("  [forcing final no-tool call]")
+        for chunk in backend.stream(messages, tools=None, system=system):
+            final_text += chunk.text
+        final_text = final_text.strip()
 
     elapsed = time.time() - t0
     print(f"  Answer: {final_text[:200]}")
@@ -378,7 +401,10 @@ def main():
 
     for name in to_run:
         try:
-            results[name] = TESTS[name]()
+            if name == "pipeline" and len(sys.argv) > 2:
+                results[name] = TESTS[name](sys.argv[2])
+            else:
+                results[name] = TESTS[name]()
         except Exception as e:
             print(f"  ERROR: {e}")
             results[name] = False

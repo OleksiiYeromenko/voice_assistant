@@ -101,52 +101,61 @@ def _all_blocks(page_id: str) -> list[dict]:
     return blocks
 
 
-def _llm_urls() -> tuple[str, str]:
-    """Return (remote_url, local_url) for synchronous LLM calls."""
+def _fallback_url() -> str:
+    """Find an available local LLM server (used only when no backend is passed)."""
     try:
         from src.config import load_config
-
         cfg = load_config().get("llm", {})
-        remote = cfg.get("remote_base_url", "http://192.168.1.74:11434")
         local = cfg.get("local_base_url", "http://localhost:8080")
+        remote = cfg.get("remote_base_url", "http://192.168.1.74:11434")
     except Exception:
-        remote = "http://192.168.1.74:11434"
-        local = "http://localhost:8080"
-    return remote, local
+        local, remote = "http://localhost:8080", "http://192.168.1.74:11434"
+    from src.llm.backends import check_llama_cpp_connectivity
+    return local if check_llama_cpp_connectivity(local) else remote
 
 
-def _llm_call(prompt: str, max_tokens: int = 1024, timeout: int = 60) -> str:
-    """Single-turn synchronous LLM call via OpenAI-compatible /v1/chat/completions.
+def _llm_call(prompt: str, backend=None, max_tokens: int = 2048) -> str:
+    """Single-turn LLM call using the active backend.
 
-    Tries remote Ollama first, falls back to local llama.cpp.
-    Adds /no_think to suppress qwen3 chain-of-thought output.
+    Cloud backends (Claude/Gemini): streams via their SDK.
+    Local backends (Ollama/llama.cpp): direct HTTP with custom max_tokens so
+    recipe parsing isn't capped by the low num_predict tuned for conversation.
     """
-    remote_url, local_url = _llm_urls()
+    from src.llm.backends import ClaudeBackend, GeminiBackend
+
+    if isinstance(backend, (ClaudeBackend, GeminiBackend)):
+        result = ""
+        for chunk in backend.stream([{"role": "user", "content": prompt}]):
+            result += chunk.text
+        return result.strip()
+
+    base_url = getattr(backend, "_base_url", None) or _fallback_url()
+    model = getattr(backend, "_model", "")
     payload = {
-        "model": "qwen3:4b",
-        "messages": [{"role": "user", "content": f"/no_think\n{prompt}"}],
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
         "stream": False,
-        "options": {"num_predict": max_tokens, "temperature": 0.1},
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
     }
-    for base_url in (remote_url, local_url):
-        try:
-            with httpx.Client(timeout=timeout) as client:
-                r = client.post(f"{base_url}/v1/chat/completions", json=payload)
-                r.raise_for_status()
-                return r.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            log.warning(f"LLM call via {base_url} failed: {e}")
-    raise RuntimeError("All LLM backends failed")
+    try:
+        with httpx.Client(timeout=90) as client:
+            r = client.post(f"{base_url}/v1/chat/completions", json=payload)
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        log.error(f"LLM call via {base_url} failed: {e}")
+        raise RuntimeError(f"LLM backend unavailable: {e}") from e
 
 
-def _translate_to_en(text_uk: str) -> str:
+def _translate_to_en(text_uk: str, backend=None) -> str:
     prompt = (
         "Translate the following Ukrainian recipe text to English. "
         "Preserve formatting: keep each line as a separate line. "
         "Output only the translation, no commentary.\n\n"
         f"{text_uk}"
     )
-    return _llm_call(prompt, max_tokens=1024, timeout=45)
+    return _llm_call(prompt, backend=backend, max_tokens=1024)
 
 
 def _write_en_sections_to_notion(page_id: str, ingredients_en: str, instructions_en: str) -> None:
@@ -398,7 +407,7 @@ def search_recipes(
         )
 
 
-def get_recipe(title_en: str) -> str:
+def get_recipe(title_en: str, backend=None) -> str:
     err = _check_notion_config()
     if err:
         return err
@@ -456,8 +465,8 @@ def get_recipe(title_en: str) -> str:
             ing_uk = "\n".join(sections.get("Ingredients", []))
             inst_uk = "\n".join(sections.get("Instructions", []))
             try:
-                ing_en_text = _translate_to_en(ing_uk) if (ing_uk and not has_en_ing) else "\n".join(sections.get("Ingredients (EN)", []))
-                inst_en_text = _translate_to_en(inst_uk) if (inst_uk and not has_en_inst) else "\n".join(sections.get("Instructions (EN)", []))
+                ing_en_text = _translate_to_en(ing_uk, backend) if (ing_uk and not has_en_ing) else "\n".join(sections.get("Ingredients (EN)", []))
+                inst_en_text = _translate_to_en(inst_uk, backend) if (inst_uk and not has_en_inst) else "\n".join(sections.get("Instructions (EN)", []))
                 _write_en_sections_to_notion(page_id, ing_en_text, inst_en_text)
                 log.info(f"Cached EN translation for: {name_en}")
                 en_ingredients = [l for l in ing_en_text.splitlines() if l.strip()]
@@ -501,7 +510,7 @@ def get_recipe(title_en: str) -> str:
         )
 
 
-def fetch_recipe_from_web(recipe_name: str) -> str:
+def fetch_recipe_from_web(recipe_name: str, backend=None) -> str:
     try:
         try:
             from ddgs import DDGS
@@ -549,7 +558,7 @@ def fetch_recipe_from_web(recipe_name: str) -> str:
             f"Page URL: {url}\n\nPage content:\n{clean}"
         )
 
-        content = _llm_call(parse_prompt, max_tokens=2000, timeout=90)
+        content = _llm_call(parse_prompt, backend=backend, max_tokens=2000)
 
         json_match = re.search(r"\{.*\}", content, re.DOTALL)
         if not json_match:
@@ -597,7 +606,7 @@ def fetch_recipe_from_web(recipe_name: str) -> str:
         )
 
 
-def add_recipe_to_notion(recipe_draft: str) -> str:
+def add_recipe_to_notion(recipe_draft: str, backend=None) -> str:
     err = _check_notion_config()
     if err:
         return err
@@ -622,9 +631,9 @@ def add_recipe_to_notion(recipe_draft: str) -> str:
         inst_en_text = ""
         try:
             if ingredients_uk:
-                ing_en_text = _translate_to_en("\n".join(ingredients_uk))
+                ing_en_text = _translate_to_en("\n".join(ingredients_uk), backend)
             if instructions_uk:
-                inst_en_text = _translate_to_en("\n".join(instructions_uk))
+                inst_en_text = _translate_to_en("\n".join(instructions_uk), backend)
         except Exception as e:
             log.warning(f"Translation failed during add, skipping EN cache: {e}")
 

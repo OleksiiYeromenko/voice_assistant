@@ -5,6 +5,7 @@ Each tool is:
   - A Python function that executes the tool
 """
 
+import inspect
 import logging
 from typing import Any
 
@@ -554,7 +555,7 @@ def register_tool(name: str, fn: callable):
     log.info(f"Registered dynamic tool: {name}")
 
 
-def execute_tool(name: str, arguments: dict[str, Any]) -> str:
+def execute_tool(name: str, arguments: dict[str, Any], backend=None) -> str:
     """Execute a tool by name. Returns result string."""
     fn = _TOOL_FUNCTIONS.get(name)
     if not fn:
@@ -562,6 +563,8 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> str:
 
     log.info(f"Executing tool: {name}({arguments})")
     try:
+        if backend is not None and "backend" in inspect.signature(fn).parameters:
+            return fn(**arguments, backend=backend)
         return fn(**arguments)
     except Exception as e:
         log.error(f"Tool {name} failed: {e}")

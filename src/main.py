@@ -221,7 +221,7 @@ def run_llm_with_tools(
                 tools_used.add(tc.name)
                 if ui_bus is not None:
                     ui_bus.tool_started.emit(tc.name)
-                result = execute_tool(tc.name, tc.arguments)
+                result = execute_tool(tc.name, tc.arguments, backend=backend)
                 if ui_bus is not None:
                     ui_bus.tool_done.emit(tc.name, str(result)[:80])
                 messages.append(
