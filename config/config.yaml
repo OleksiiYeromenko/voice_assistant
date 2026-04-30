@@ -11,13 +11,13 @@ wake_word:
 
 # --- Speech-to-Text ---
 stt:
-  model: "base.en"          # tiny.en | base.en | small.en
+  model: "tiny.en"          # tiny.en | base.en | small.en  (tiny.en ~1s on RPi5 vs ~2s for base.en)
   device: "cpu"
   compute_type: "int8"
   beam_size: 1
   language: "en"
   vad_filter: true
-  silence_timeout_s: 2.0   # Seconds of silence before STT finalizes
+  silence_timeout_s: 1.5   # Seconds of silence before STT finalizes
   # null = auto-detect USB mic via 'arecord -l' (survives device index changes on reboot).
   # Set to an ALSA device string like "plughw:1,0" to force a specific device.
   alsa_device: null
@@ -26,15 +26,20 @@ stt:
 llm:
   remote_base_url: "http://192.168.1.74:11434"  # GPU PC — Ollama (primary, tried first at startup)
   local_base_url: "http://localhost:8080"        # RPi — llama.cpp server (fallback if GPU PC unreachable)
-  # llama.cpp server startup example:
-  #   llama-server -m /path/to/model.gguf --port 8080 --ctx-size 2048 -np 1 -t 4 --reasoning-budget 0
+  # llama.cpp server startup (recommended flags for RPi5):
+  #   llama-server -m /path/to/model.gguf --port 8080 --ctx-size 2048 -np 1 -t 4 --reasoning-budget 0 \
+  #     --cache-type-k q8_0 --cache-type-v q8_0
+  #
+  # --cache-type-k/v q8_0: quantise KV cache to 8-bit (halves VRAM/RAM usage, no quality loss)
+  # cache_prompt=true is sent per-request (see backends.py) — the KV cache is reused for
+  # identical prompt prefixes so only new conversation turns need prefill after the first query.
 
   # Fast local model — default for everyday queries
   local:
     model: "gemma4-e2b-q4km"   # Informational; echoed in backend.name (llama.cpp ignores it)
     temperature: 0.7
     num_ctx: 4096              # Set at llama-server startup (--ctx-size), kept for reference
-    num_predict: 500           # Max tokens per response — caps generation time on slow CPU
+    num_predict: 150           # Max tokens per response — 150 ≈ 100-120 spoken words, enough for voice
     # num_thread: set at llama-server startup (-t flag), not passed via API
     think: false
     # System prompt is loaded from memory/PERSONA.md (human-editable, git-tracked)

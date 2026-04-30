@@ -399,6 +399,11 @@ class LlamaCppBackend:
             # Most reliable method: start llama-server with --reasoning-budget 0.
             "chat_template_kwargs": {"enable_thinking": False},
             "thinking_budget_tokens": 0,
+            # Reuse KV cache from the previous request when the prompt prefix is
+            # identical (system prompt + tools + earlier conversation turns).
+            # After the first request, only new messages need prefill — this cuts
+            # first-token latency from ~70s to <5s on subsequent queries.
+            "cache_prompt": True,
         }
         if self._num_predict is not None:
             payload["max_tokens"] = self._num_predict
