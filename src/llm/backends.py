@@ -495,7 +495,7 @@ class ClaudeBackend:
         kwargs: dict[str, Any] = {
             "model": self._model,
             "max_tokens": self._max_tokens,
-            "messages": messages,
+            "messages": self._normalize_messages(messages),
         }
         if system:
             kwargs["system"] = system
@@ -547,6 +547,59 @@ class ClaudeBackend:
                 done=True,
                 model=self.name,
             )
+
+    @staticmethod
+    def _normalize_messages(messages: list[dict]) -> list[dict]:
+        """Convert Ollama-style messages to Anthropic API format.
+
+        Anthropic requires tool calls as content blocks with stable IDs, and
+        tool results as user-role messages referencing those IDs.
+        """
+        normalized: list[dict] = []
+        # track (name, id) pairs from the most recent assistant tool_calls block
+        pending: list[tuple[str, str]] = []
+
+        for msg in messages:
+            role = msg["role"]
+
+            if role == "assistant" and msg.get("tool_calls"):
+                pending = []
+                content: list[dict] = []
+                if msg.get("content"):
+                    content.append({"type": "text", "text": msg["content"]})
+                for i, tc in enumerate(msg["tool_calls"]):
+                    fn = tc.get("function", tc)
+                    name = fn["name"]
+                    args = fn.get("arguments", {})
+                    call_id = tc.get("id") or f"call_{name}_{i}"
+                    content.append({"type": "tool_use", "id": call_id, "name": name, "input": args})
+                    pending.append((name, call_id))
+                normalized.append({"role": "assistant", "content": content})
+
+            elif role == "tool":
+                tool_name = msg.get("tool_name", "")
+                call_id = f"call_{tool_name}_0"
+                for i, (name, cid) in enumerate(pending):
+                    if name == tool_name:
+                        call_id = cid
+                        pending.pop(i)
+                        break
+                # Anthropic groups tool results under role "user"
+                # Merge consecutive tool results into the previous user block if present
+                if normalized and normalized[-1]["role"] == "user" and isinstance(normalized[-1]["content"], list):
+                    normalized[-1]["content"].append(
+                        {"type": "tool_result", "tool_use_id": call_id, "content": str(msg.get("content", ""))}
+                    )
+                else:
+                    normalized.append({
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": call_id, "content": str(msg.get("content", ""))}],
+                    })
+
+            else:
+                normalized.append({"role": role, "content": msg.get("content", "")})
+
+        return normalized
 
     @staticmethod
     def _convert_tools(ollama_tools: list[dict]) -> list[dict]:

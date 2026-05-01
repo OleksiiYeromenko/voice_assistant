@@ -6,6 +6,8 @@ Usage:
   uv run scripts/test_components.py tts           # Test text-to-speech
   uv run scripts/test_components.py llm           # Test Ollama chat
   uv run scripts/test_components.py llm-tools     # Test Ollama with tool calling
+  uv run scripts/test_components.py claude        # Test Claude streaming
+  uv run scripts/test_components.py claude-tools  # Test Claude with tool calling (full round-trip)
   uv run scripts/test_components.py gemini        # Test Gemini streaming
   uv run scripts/test_components.py gemini-tools  # Test Gemini with tool calling (full round-trip)
   uv run scripts/test_components.py weather       # Test weather tool
@@ -97,6 +99,86 @@ def test_llm_tools():
     else:
         print(f"  No tool call — direct response: {text[:100]}")
         return bool(text)
+
+
+def test_claude():
+    print("\n" + "=" * 50)
+    print("Testing Claude (streaming text)")
+    print("=" * 50)
+    from src.config import load_config
+    from src.llm.backends import ClaudeBackend
+
+    cfg = load_config()
+    model = cfg["llm"]["cloud"]["claude"]["model"]
+    max_tokens = cfg["llm"]["cloud"]["claude"].get("max_tokens", 1024)
+    backend = ClaudeBackend(model=model, max_tokens=max_tokens)
+    print(f"  Model: {backend.name}")
+
+    messages = [{"role": "user", "content": "What is 2 + 2? Answer in one sentence."}]
+    print("  Response: ", end="", flush=True)
+    full = ""
+    for chunk in backend.stream(messages, system="Be brief."):
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+            full += chunk.text
+    print()
+
+    if "unavailable" in full.lower():
+        print("  ✗ API error — check ANTHROPIC_API_KEY")
+        return False
+    return bool(full.strip())
+
+
+def test_claude_tools():
+    print("\n" + "=" * 50)
+    print("Testing Claude with tool calling (full round-trip)")
+    print("=" * 50)
+    from src.config import load_config
+    from src.llm.backends import ClaudeBackend
+    from src.tools.executor import ALL_TOOLS, execute_tool
+
+    cfg = load_config()
+    model = cfg["llm"]["cloud"]["claude"]["model"]
+    max_tokens = cfg["llm"]["cloud"]["claude"].get("max_tokens", 1024)
+    backend = ClaudeBackend(model=model, max_tokens=max_tokens)
+    system = "Use tools when needed. Be brief."
+
+    messages = [{"role": "user", "content": "What time is it right now?"}]
+    print(f"  Model: {backend.name}")
+    print(f"  Query: '{messages[0]['content']}'")
+
+    # Round 1: expect a tool call
+    print("  Round 1 (tool call)...")
+    text = ""
+    tool_calls = []
+    for chunk in backend.stream(messages, tools=ALL_TOOLS, system=system):
+        text += chunk.text
+        tool_calls.extend(chunk.tool_calls)
+
+    if not tool_calls:
+        print(f"  ✗ No tool call — direct response: {text[:100]}")
+        return False
+
+    tc = tool_calls[0]
+    print(f"    Tool: {tc.name}({tc.arguments})")
+
+    result = execute_tool(tc.name, tc.arguments)
+    print(f"    Result: {result}")
+
+    messages.append({
+        "role": "assistant", "content": text,
+        "tool_calls": [{"function": {"name": tc.name, "arguments": tc.arguments}}],
+    })
+    messages.append({"role": "tool", "tool_name": tc.name, "content": result})
+
+    # Round 2: expect a text response using tool result
+    print("  Round 2 (final response)...")
+    final = ""
+    for chunk in backend.stream(messages, tools=ALL_TOOLS, system=system):
+        if chunk.text:
+            final += chunk.text
+    print(f"    Response: {final[:120]}")
+    return bool(final.strip())
 
 
 def test_gemini():
@@ -381,6 +463,8 @@ TESTS = {
     "tts": test_tts,
     "llm": test_llm,
     "llm-tools": test_llm_tools,
+    "claude": test_claude,
+    "claude-tools": test_claude_tools,
     "gemini": test_gemini,
     "gemini-tools": test_gemini_tools,
     "weather": test_weather,

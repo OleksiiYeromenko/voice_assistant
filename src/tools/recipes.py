@@ -139,10 +139,16 @@ def _llm_call(prompt: str, backend=None, max_tokens: int = 2048) -> str:
         "temperature": 0.1,
     }
     try:
-        with httpx.Client(timeout=90) as client:
+        with httpx.Client(timeout=900) as client:
             r = client.post(f"{base_url}/v1/chat/completions", json=payload)
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
+            msg = r.json()["choices"][0]["message"]
+            # Thinking models (e.g. Gemma-IT) put output in reasoning_content when
+            # max_tokens is exhausted during thought — fall back to extract JSON from there.
+            content = msg.get("content", "").strip()
+            if not content:
+                content = msg.get("reasoning_content", "").strip()
+            return content
     except Exception as e:
         log.error(f"LLM call via {base_url} failed: {e}")
         raise RuntimeError(f"LLM backend unavailable: {e}") from e
