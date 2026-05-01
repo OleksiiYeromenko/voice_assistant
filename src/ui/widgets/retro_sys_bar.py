@@ -9,7 +9,7 @@ from src.ui import theme as T
 
 _FONT = "Press Start 2P"
 _FB = "DejaVu Sans Mono"
-_FZ = 10  # spec 7px → 10px
+_FZ = 14  # spec 7px → 14px for RPi display
 
 
 def _ss_label(color: str) -> str:
@@ -33,7 +33,7 @@ class RetroSysBar(QWidget):
 
     def __init__(self, bus, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(36)
+        self.setFixedHeight(40)
         self.setObjectName("retro_sys_bar")
         self.setStyleSheet(
             f"#retro_sys_bar {{ background-color: {T.RETRO_ELEVATED}; "

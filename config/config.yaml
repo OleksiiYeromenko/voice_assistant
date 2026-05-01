@@ -6,18 +6,18 @@ wake_word:
   # Pre-trained models: "hey_jarvis", "alexa", "hey_mycroft", "timer", etc.
   # Or path to custom .onnx model, e.g. "./models/my_wakeword.onnx"
   model: "./models/hey_Poon-dyk_acc_0.82_rec_0.64_fp_5.13.onnx"
-  threshold: 0.85         # Detection confidence (0.0-1.0) — tune for your custom model
+  threshold: 0.9         # Detection confidence (0.0-1.0) — tune for your custom model
   record_detections: true  # Save 3s pre-detection WAV to data/wake_captures/raw/ for FP collection
 
 # --- Speech-to-Text ---
 stt:
-  model: "tiny.en"          # tiny.en | base.en | small.en  (tiny.en ~1s on RPi5 vs ~2s for base.en)
+  model: "base.en"          # tiny.en | base.en | small.en  (tiny.en ~1s on RPi5 vs ~2s for base.en)
   device: "cpu"
   compute_type: "int8"
   beam_size: 1
   language: "en"
   vad_filter: true
-  silence_timeout_s: 1.5   # Seconds of silence before STT finalizes
+  silence_timeout_s: 2   # Seconds of silence before STT finalizes
   # null = auto-detect USB mic via 'arecord -l' (survives device index changes on reboot).
   # Set to an ALSA device string like "plughw:1,0" to force a specific device.
   alsa_device: null

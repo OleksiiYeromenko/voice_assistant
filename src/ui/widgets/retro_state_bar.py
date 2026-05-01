@@ -30,7 +30,7 @@ class RetroStateBar(QWidget):
 
     def __init__(self, bus, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(40)
+        self.setFixedHeight(46)
         self.setObjectName("retro_state_bar")
 
         self._state = "IDLE"
@@ -44,7 +44,7 @@ class RetroStateBar(QWidget):
         # State tag: bordered box, color changes per state
         self._state_tag = QLabel()
         self._state_tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._state_tag.setFixedHeight(28)
+        self._state_tag.setFixedHeight(34)
         self._state_tag.setContentsMargins(10, 0, 10, 0)
 
         # Gap
@@ -53,20 +53,20 @@ class RetroStateBar(QWidget):
 
         # Model badge
         self._model_tag = QLabel()
-        self._model_tag.setFixedHeight(26)
+        self._model_tag.setFixedHeight(30)
         self._model_tag.setContentsMargins(8, 0, 8, 0)
         self._model_tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Radio tag (optional)
         self._radio_tag = QLabel()
-        self._radio_tag.setFixedHeight(26)
+        self._radio_tag.setFixedHeight(30)
         self._radio_tag.setContentsMargins(8, 0, 8, 0)
         self._radio_tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._radio_tag.setVisible(False)
 
         # Time (right-aligned)
         self._clock_lbl = QLabel()
-        self._clock_lbl.setStyleSheet(_ss(T.RETRO_TEXT_SECONDARY, 13, 4))
+        self._clock_lbl.setStyleSheet(_ss(T.RETRO_TEXT_SECONDARY, 16, 4))
         self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         layout.addWidget(self._state_tag)
@@ -116,7 +116,7 @@ class RetroStateBar(QWidget):
             self._radio_tag.setText(f"♪  {station[:18]}")
             self._radio_tag.setStyleSheet(
                 f"color: #4fc3f7; font-family: '{_FONT}', '{_FB}'; "
-                f"font-size: 10px; letter-spacing: 1px; border: 1px solid #4fc3f760; "
+                f"font-size: 12px; letter-spacing: 1px; border: 1px solid #4fc3f760; "
                 f"background: transparent;"
             )
             self._radio_tag.setVisible(True)
@@ -141,7 +141,7 @@ class RetroStateBar(QWidget):
         self._state_tag.setStyleSheet(
             f"color: {fg}; background-color: {bg}; "
             f"font-family: '{_FONT}', '{_FB}'; "
-            f"font-size: 10px; letter-spacing: 2px; font-weight: bold; "
+            f"font-size: 13px; letter-spacing: 2px; font-weight: bold; "
             f"border: 2px solid {fg}; padding: 2px 10px;"
         )
         # Glow on state tag
@@ -159,7 +159,7 @@ class RetroStateBar(QWidget):
         self._model_tag.setText(f"{label} / {tag.upper()}")
         self._model_tag.setStyleSheet(
             f"color: {fg}; font-family: '{_FONT}', '{_FB}'; "
-            f"font-size: 9px; letter-spacing: 2px; "
+            f"font-size: 12px; letter-spacing: 2px; "
             f"border: 1px solid {fg}60; padding: 2px 8px; background: transparent;"
         )
 

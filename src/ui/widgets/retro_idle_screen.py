@@ -10,7 +10,7 @@ from datetime import datetime
 
 import psutil
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtGui import QColor, QFont, QPainter
 from PyQt6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
@@ -28,12 +28,16 @@ _FONT = "Press Start 2P"
 _FB = "DejaVu Sans Mono"  # fallback
 
 # Font pixel sizes (spec px → readable Qt px, scaled ~1.4× for RPi 133dpi display)
-_FZ_TINY = 10    # spec 6px  — sub-model, badge
-_FZ_SMALL = 11   # spec 7px  — labels, ASCII bars, status text
-_FZ_BODY = 12    # spec 8px  — header, prompt text
+_FZ_TINY = 12    # spec 6px  — sub-model, badge
+_FZ_SMALL = 14   # spec 7px  — labels, ASCII bars, status text
+_FZ_BODY = 16    # spec 8px  — header, prompt text
 _FZ_MED = 13     # spec 9px  — time in state bar
 _FZ_RESP = 15    # spec 11px — response text
-_FZ_CLOCK = 64   # spec 64px — clock (unchanged)
+_FZ_CLOCK = 88   # spec 64px — clock (scaled for RPi physical display)
+
+_HEADER_H = 44    # was 40 hardcoded
+_BOTTOM_H = 36    # was 32 hardcoded
+_BOX_W = 600      # was 480 hardcoded
 
 _RECIPE_FONT_PX = 22
 _RECIPE_NUM_FONT_PX = 14
@@ -45,7 +49,7 @@ def _ss(color: str, size: int, spacing: int = 1, bold: bool = False) -> str:
     return (
         f"color: {color}; font-family: '{_FONT}', '{_FB}'; "
         f"font-size: {size}px; letter-spacing: {spacing}px; font-weight: {w}; "
-        f"background: transparent;"
+        f"background: transparent; border: none;"
     )
 
 
@@ -64,10 +68,9 @@ def _get_uptime() -> str:
     try:
         elapsed = time.time() - psutil.boot_time()
         h = int(elapsed // 3600)
-        m = int((elapsed % 3600) // 60)
-        return f"{h:02d}H {m:02d}M"
+        return f"{h:02d}H"
     except Exception:
-        return "--H --M"
+        return "--H"
 
 
 def _metric_color(val: float, warn: float, crit: float) -> str:
@@ -92,12 +95,52 @@ class ScanlineOverlay(QWidget):
     def paintEvent(self, _event):
         p = QPainter(self)
         # rgba(0,0,0,0.35) → alpha ≈ 89
-        dark = QColor(0, 0, 0, 89)
+        dark = QColor(0, 0, 0, 120)
         y = 1
         while y < self.height():
             p.fillRect(0, y, self.width(), 1, dark)
             y += 2
         p.end()
+
+
+# ── Clock with purple CRT chromatic-aberration glow ─────────────────────────
+
+class CRTClockLabel(QLabel):
+    """Draws purple offset shadow layers underneath the standard cyan clock text."""
+
+    def paintEvent(self, event):
+        font = QFont(self.font())
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 8.0)
+        rect = self.rect()
+        align = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, False)
+        p.setFont(font)
+        # Wide purple halo — multi-radius blur simulation
+        for r, alpha in ((10, 8), (7, 14), (5, 20), (3, 28)):
+            h2 = max(1, r // 2)
+            for dx, dy in ((-r, 0), (r, 0), (0, -r), (0, r),
+                           (-r, -h2), (r, -h2), (-r, h2), (r, h2)):
+                p.setPen(QColor(140, 0, 255, alpha))
+                p.drawText(rect.translated(dx, dy), align, self.text())
+        # Outer cyan glow ring — simulate 0 0 40px #00ffcc30
+        for dx, dy in ((-5, 0), (5, 0), (0, -5), (0, 5), (-4, -4), (4, -4), (-4, 4), (4, 4)):
+            p.setPen(QColor(0, 255, 204, 50))
+            p.drawText(rect.translated(dx, dy), align, self.text())
+        # Inner cyan glow ring — simulate 0 0 20px #00ffcc80
+        for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, -1), (-1, 1), (1, 1),
+                       (-2, -2), (2, -2), (-2, 2), (2, 2)):
+            p.setPen(QColor(0, 255, 204, 100))
+            p.drawText(rect.translated(dx, dy), align, self.text())
+        # Chromatic aberration — right+down diagonal spread (no left-side offset)
+        p.setPen(QColor(170, 0, 255, 220))
+        p.drawText(rect.translated(3, 2), align, self.text())
+        p.setPen(QColor(140, 0, 255, 120))
+        p.drawText(rect.translated(5, 3), align, self.text())
+        p.setPen(QColor(110, 0, 255, 60))
+        p.drawText(rect.translated(7, 4), align, self.text())
+        p.end()
+        super().paintEvent(event)  # sharp cyan text on top
 
 
 # ── Status box widgets ───────────────────────────────────────────────────────
@@ -107,71 +150,70 @@ class HardwareRow(QWidget):
 
     def __init__(self, label: str, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background: transparent;")
+        self.setStyleSheet("background: transparent; border: none;")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 1, 0, 1)
-        lay.setSpacing(3)
+        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setSpacing(6)
 
         self._lbl = QLabel(label)
-        self._lbl.setFixedWidth(40)
+        self._lbl.setFixedWidth(72)
         self._lbl.setStyleSheet(_ss(T.RETRO_TEXT_SECONDARY, _FZ_SMALL, 2))
 
-        # Split bar into two labels so each half can have its own color
-        self._bar_lit = QLabel()
-        self._bar_lit.setStyleSheet(_ss(T.RETRO_TEXT_PRIMARY, _FZ_SMALL, 1))
-        self._bar_dim = QLabel()
-        self._bar_dim.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _FZ_SMALL, 1))
+        # Single label with HTML spans for lit/dim colors
+        self._bar_lbl = QLabel()
+        self._bar_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._bar_lbl.setStyleSheet(
+            f"background: transparent; font-family: '{_FONT}', '{_FB}'; "
+            f"font-size: {_FZ_SMALL}px; letter-spacing: 2px;"
+        )
 
         self._val = QLabel()
-        self._val.setFixedWidth(40)
-        self._val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._val.setStyleSheet(_ss(T.RETRO_TEXT_PRIMARY, _FZ_SMALL, 1))
 
         lay.addWidget(self._lbl)
-        lay.addWidget(self._bar_lit)
-        lay.addWidget(self._bar_dim)
-        lay.addStretch()
+        lay.addWidget(self._bar_lbl)
+        lay.addSpacing(8)
         lay.addWidget(self._val)
 
     def update_metric(self, pct: float, value_str: str, color: str):
         length = 10
         filled = max(0, min(length, round(pct / 100 * length)))
-        self._bar_lit.setText("█" * filled)
-        self._bar_dim.setText("█" * (length - filled))
-        self._bar_lit.setStyleSheet(_ss(color, _FZ_SMALL, 1))
+        lit = "█" * filled
+        dim = "█" * (length - filled)
+        self._bar_lbl.setText(
+            f'<span style="color:{color};">{lit}</span>'
+            f'<span style="color:{T.RETRO_TEXT_MUTED};">{dim}</span>'
+        )
         self._val.setText(value_str)
         self._val.setStyleSheet(_ss(color, _FZ_SMALL, 1))
 
 
 class BackendRow(QWidget):
-    """LABEL [●] ONLINE/OFFLIN  sub-model  [ACT]"""
+    """LABEL [●] ONLINE/OFFLIN  [ACT]"""
 
     def __init__(self, label: str, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background: transparent;")
+        self.setStyleSheet("background: transparent; border: none;")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 1, 0, 1)
-        lay.setSpacing(3)
+        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setSpacing(6)
 
         self._lbl = QLabel(label)
-        self._lbl.setFixedWidth(54)
+        self._lbl.setFixedWidth(92)
         self._lbl.setStyleSheet(_ss(T.RETRO_TEXT_SECONDARY, _FZ_SMALL, 1))
 
         self._dot = QLabel("■")
-        self._dot.setStyleSheet(_ss("#ff4444", _FZ_SMALL - 2, 0))
+        self._dot.setStyleSheet(_ss("#ff4444", _FZ_SMALL - 3, 0))
 
-        self._status = QLabel("OFFLIN")
-        self._status.setFixedWidth(60)
+        self._status = QLabel("OFFLN")
+        self._status.setFixedWidth(92)
         self._status.setStyleSheet(_ss("#ff4444", _FZ_SMALL, 1))
-
-        self._sub = QLabel()
-        self._sub.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _FZ_TINY, 1))
 
         self._act = QLabel("ACT")
         self._act.setStyleSheet(
             f"color: {T.RETRO_ACCENT}; font-family: '{_FONT}', '{_FB}'; "
             f"font-size: {_FZ_TINY}px; letter-spacing: 1px; "
-            f"border: 1px solid {T.RETRO_ACCENT}; padding: 0px 3px; background: transparent;"
+            f"border: 1px solid {T.RETRO_ACCENT}; padding: 1px 5px; background: transparent;"
         )
         glow = QGraphicsDropShadowEffect()
         glow.setBlurRadius(5)
@@ -183,15 +225,14 @@ class BackendRow(QWidget):
         lay.addWidget(self._lbl)
         lay.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignVCenter)
         lay.addWidget(self._status)
-        lay.addWidget(self._sub, 1)
+        lay.addStretch(1)
         lay.addWidget(self._act)
 
     def set_status(self, online: bool, sub_model: str, active: bool):
         color = "#00ff66" if online else "#ff4444"
-        self._dot.setStyleSheet(_ss(color, _FZ_SMALL - 2, 0))
-        self._status.setText("ONLINE" if online else "OFFLIN")
+        self._dot.setStyleSheet(_ss(color, _FZ_SMALL - 3, 0))
+        self._status.setText("ONLN" if online else "OFFLN")
         self._status.setStyleSheet(_ss(color, _FZ_SMALL, 1))
-        self._sub.setText(sub_model[:14])
         self._act.setVisible(active)
 
 
@@ -224,9 +265,9 @@ class RetroIdleScreen(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # ── Header bar (h:40) ────────────────────────────────────────────────
+        # ── Header bar (h:44) ────────────────────────────────────────────────
         header = QWidget()
-        header.setFixedHeight(40)
+        header.setFixedHeight(44)
         header.setStyleSheet(
             f"background-color: {T.RETRO_ELEVATED}; "
             f"border-bottom: 2px solid {T.RETRO_BORDER};"
@@ -238,7 +279,7 @@ class RetroIdleScreen(QWidget):
         sys_title.setStyleSheet(_ss(T.RETRO_ACCENT, _FZ_BODY, 2))
 
         self._date_lbl = QLabel()
-        self._date_lbl.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _FZ_SMALL, 1))
+        self._date_lbl.setStyleSheet(_ss(T.RETRO_TEXT_SECONDARY, _FZ_SMALL, 1))
         self._date_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         h_lay.addWidget(sys_title)
@@ -252,56 +293,54 @@ class RetroIdleScreen(QWidget):
         clock_panel = QWidget()
         clock_panel.setStyleSheet(f"background-color: {T.RETRO_BG};")
         cp_lay = QVBoxLayout(clock_panel)
-        cp_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cp_lay.setSpacing(0)
-        cp_lay.setContentsMargins(0, 16, 0, 0)
+        cp_lay.setContentsMargins(0, 0, 0, 0)
 
-        # Big clock (64px, with cyan glow)
-        self._clock_lbl = QLabel("00:00")
+        # Big clock (88px, with cyan glow + purple chromatic aberration)
+        self._clock_lbl = CRTClockLabel("00:00")
         self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._clock_lbl.setStyleSheet(
             f"color: {T.RETRO_TEXT_PRIMARY}; font-family: '{_FONT}', '{_FB}'; "
             f"font-size: {_FZ_CLOCK}px; letter-spacing: 8px; background: transparent;"
         )
-        clock_glow = QGraphicsDropShadowEffect()
-        clock_glow.setBlurRadius(20)
-        clock_glow.setColor(QColor(0, 255, 204, 128))  # #00ffcc at 50% alpha
-        clock_glow.setOffset(0, 0)
-        self._clock_lbl.setGraphicsEffect(clock_glow)
-
-        # Status box wrapper (w:480, centered)
+        _clock_glow = QGraphicsDropShadowEffect()
+        _clock_glow.setBlurRadius(40)
+        _clock_glow.setColor(QColor(0, 255, 204, 120))
+        _clock_glow.setOffset(0, 0)
+        self._clock_lbl.setGraphicsEffect(_clock_glow)
+        # Status box wrapper (w:660, centered)
         box_wrapper = QWidget()
-        box_wrapper.setFixedWidth(480)
+        box_wrapper.setFixedWidth(660)
         box_wrapper.setStyleSheet("background: transparent;")
         bw_lay = QVBoxLayout(box_wrapper)
         bw_lay.setContentsMargins(0, 0, 0, 0)
         bw_lay.setSpacing(0)
 
-        # Status box (border, no bottom border — prompt row continues it)
+        # Status box (fully bordered; prompt row is a separate box below)
         status_box = QFrame()
+        status_box.setObjectName("statusBox")
         status_box.setStyleSheet(
-            f"QFrame {{ background-color: #040414; "
-            f"border: 2px solid {T.RETRO_BORDER}; "
-            f"border-bottom: none; }}"
+            f"#statusBox {{ background-color: #040414; "
+            f"border: 2px solid {T.RETRO_BORDER}; }}"
         )
         sb_lay = QVBoxLayout(status_box)
-        sb_lay.setContentsMargins(16, 12, 16, 10)
-        sb_lay.setSpacing(6)
+        sb_lay.setContentsMargins(24, 20, 24, 18)
+        sb_lay.setSpacing(12)
 
         # "SYSTEM STATUS" header
         hdr = QLabel("SYSTEM STATUS")
-        hdr.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _FZ_SMALL, 3))
+        hdr.setStyleSheet(_ss(T.RETRO_TEXT_SECONDARY, _FZ_SMALL, 3))
         hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sb_lay.addWidget(hdr)
 
         # Two-column layout
         cols_lay = QHBoxLayout()
-        cols_lay.setContentsMargins(0, 4, 0, 0)
+        cols_lay.setContentsMargins(0, 6, 0, 0)
         cols_lay.setSpacing(0)
 
         # Left column — hardware metrics
         left_col = QVBoxLayout()
-        left_col.setSpacing(2)
+        left_col.setSpacing(8)
         self._hw_cpu = HardwareRow("CPU")
         self._hw_temp = HardwareRow("TEMP")
         self._hw_ram = HardwareRow("RAM")
@@ -324,10 +363,10 @@ class RetroIdleScreen(QWidget):
         net_lay.setSpacing(4)
         net_lbl = QLabel("NET")
         net_lbl.setStyleSheet(_ss(T.RETRO_TEXT_SECONDARY, _FZ_SMALL, 2))
-        net_lbl.setFixedWidth(40)
+        net_lbl.setFixedWidth(64)
         self._net_dot = QLabel("■")
-        self._net_dot.setStyleSheet(_ss("#ff4444", _FZ_SMALL - 2, 0))
-        self._net_status_lbl = QLabel("OFFLINE")
+        self._net_dot.setStyleSheet(_ss("#ff4444", _FZ_SMALL - 3, 0))
+        self._net_status_lbl = QLabel("OFFLN")
         self._net_status_lbl.setStyleSheet(_ss("#ff4444", _FZ_SMALL, 1))
         net_glow = QGraphicsDropShadowEffect()
         net_glow.setBlurRadius(5)
@@ -339,7 +378,6 @@ class RetroIdleScreen(QWidget):
         net_lay.addWidget(self._net_status_lbl)
         net_lay.addStretch()
         left_col.addWidget(net_row)
-        left_col.addStretch()
 
         # Vertical divider
         v_div = QFrame()
@@ -349,17 +387,15 @@ class RetroIdleScreen(QWidget):
 
         # Right column — backend status
         right_col = QVBoxLayout()
-        right_col.setSpacing(2)
-        right_col.setContentsMargins(14, 0, 0, 0)
+        right_col.setSpacing(8)
+        right_col.setContentsMargins(20, 0, 0, 0)
         self._be_rows: dict[str, BackendRow] = {}
         for key, lbl in (("local", "RPI"), ("remote", "GPU"), ("claude", "CLAUDE"), ("gemini", "GEMINI")):
             row = BackendRow(lbl)
             self._be_rows[key] = row
             right_col.addWidget(row)
-        right_col.addStretch()
-
         cols_lay.addLayout(left_col, 1)
-        cols_lay.addWidget(v_div, 0, Qt.AlignmentFlag.AlignVCenter)
+        cols_lay.addWidget(v_div)
         cols_lay.addLayout(right_col, 1)
         sb_lay.addLayout(cols_lay)
 
@@ -367,7 +403,7 @@ class RetroIdleScreen(QWidget):
         prompt_row = QWidget()
         prompt_row.setStyleSheet(
             f"background-color: #020210; "
-            f"border: 2px solid {T.RETRO_BORDER}; border-top: none;"
+            f"border: 2px solid {T.RETRO_BORDER};"
         )
         pr_lay = QHBoxLayout(prompt_row)
         pr_lay.setContentsMargins(20, 6, 20, 6)
@@ -375,12 +411,13 @@ class RetroIdleScreen(QWidget):
 
         prompt_gt = QLabel(">")
         prompt_gt.setStyleSheet(_ss(T.RETRO_ACCENT, _FZ_BODY, 0))
-        prompt_gt.setFixedWidth(16)
+        prompt_gt.setFixedWidth(22)
 
         self._prompt_text = QLabel("AWAITING INPUT")
         self._prompt_text.setStyleSheet(_ss(T.RETRO_ACCENT, _FZ_BODY, 3))
 
         self._prompt_cursor = QLabel("█")
+        self._prompt_cursor.setFixedWidth(20)
         self._prompt_cursor.setStyleSheet(_ss(T.RETRO_ACCENT, _FZ_BODY, 0))
 
         pr_lay.addWidget(prompt_gt)
@@ -393,9 +430,11 @@ class RetroIdleScreen(QWidget):
         bw_lay.addWidget(status_box)
         bw_lay.addWidget(prompt_row)
 
-        cp_lay.addWidget(self._clock_lbl)
-        cp_lay.addSpacing(20)
+        cp_lay.addStretch(1)
+        cp_lay.addWidget(self._clock_lbl, 0, Qt.AlignmentFlag.AlignHCenter)
+        cp_lay.addSpacing(28)
         cp_lay.addWidget(box_wrapper, 0, Qt.AlignmentFlag.AlignHCenter)
+        cp_lay.addStretch(1)
         self._center.addWidget(clock_panel)
 
         # Page 1: recipe step
@@ -420,9 +459,9 @@ class RetroIdleScreen(QWidget):
         self._center.addWidget(recipe_panel)
         self._center.setCurrentIndex(0)
 
-        # ── Bottom bar (h:32) ────────────────────────────────────────────────
+        # ── Bottom bar (h:36) ────────────────────────────────────────────────
         bottom = QWidget()
-        bottom.setFixedHeight(32)
+        bottom.setFixedHeight(36)
         bottom.setStyleSheet(
             f"background-color: {T.RETRO_ELEVATED}; "
             f"border-top: 2px solid {T.RETRO_BORDER};"
@@ -438,8 +477,8 @@ class RetroIdleScreen(QWidget):
             v.setStyleSheet(_ss(T.RETRO_TEXT_PRIMARY, _FZ_SMALL, 2))
             return k, v
 
-        k_ip, self._ip_val = _kv_pair("IP")
-        k_up, self._uptime_val = _kv_pair("UPTIME")
+        k_ip, self._ip_val = _kv_pair("IP:")
+        k_up, self._uptime_val = _kv_pair("UPTIME:")
 
         self._radio_lbl = QLabel()
         self._radio_lbl.setStyleSheet(
@@ -470,6 +509,7 @@ class RetroIdleScreen(QWidget):
         bot_lay.addWidget(self._uptime_val)
         bot_lay.addWidget(self._radio_lbl)
         bot_lay.addStretch()
+        bot_lay.addWidget(_pipe())
         bot_lay.addWidget(self._state_dot)
         bot_lay.addSpacing(4)
         bot_lay.addWidget(self._state_dot_lbl)
@@ -558,17 +598,9 @@ class RetroIdleScreen(QWidget):
     def _tick_blink(self):
         self._blink = not self._blink
 
-        # Clock colon blink
-        hh = datetime.now().strftime("%H")
-        mm = datetime.now().strftime("%M")
-        colon = ":" if self._blink else " "
-        self._clock_lbl.setText(f"{hh}{colon}{mm}")
-
-        # Prompt cursor blink
-        self._prompt_cursor.setVisible(self._blink)
-
-        # State dot blink
-        self._state_dot.setVisible(self._blink)
+        # Toggle color instead of text to avoid triggering a layout recalculation
+        cursor_color = T.RETRO_ACCENT if self._blink else "transparent"
+        self._prompt_cursor.setStyleSheet(_ss(cursor_color, _FZ_BODY, 0))
 
         # Radio ♪ blink
         if self._radio_station and self._radio_lbl.isVisible():
@@ -578,6 +610,7 @@ class RetroIdleScreen(QWidget):
 
     def _update_clock(self):
         now = datetime.now()
+        self._clock_lbl.setText(now.strftime("%H:%M"))
         self._date_lbl.setText(now.strftime("%a, %b %d, %Y").upper())
 
     def _update_uptime(self):
@@ -590,7 +623,8 @@ class RetroIdleScreen(QWidget):
 
         self._hw_cpu.update_metric(self._cpu, f"{self._cpu:.0f}%", cpu_c)
         temp_val = f"{self._temp:.0f}C" if self._temp is not None else "--C"
-        self._hw_temp.update_metric(self._temp or 0, temp_val, temp_c)
+        temp_pct = max(0.0, min(100.0, ((self._temp or 0) - 40) / 55 * 100))
+        self._hw_temp.update_metric(temp_pct, temp_val, temp_c)
         self._hw_ram.update_metric(ram_pct, f"{ram_pct:.0f}%", T.RETRO_TEXT_PRIMARY)
 
     def _update_state_dot(self, state_name: str):
@@ -608,6 +642,6 @@ class RetroIdleScreen(QWidget):
     def _on_net_updated(self, online: bool):
         self._net_online = online
         color = "#00ff66" if online else "#ff4444"
-        self._net_dot.setStyleSheet(_ss(color, _FZ_SMALL - 2, 0))
-        self._net_status_lbl.setText("ONLINE" if online else "OFFLIN")
+        self._net_dot.setStyleSheet(_ss(color, _FZ_SMALL - 3, 0))
+        self._net_status_lbl.setText("ONLN" if online else "OFFLN")
         self._net_status_lbl.setStyleSheet(_ss(color, _FZ_SMALL, 1))

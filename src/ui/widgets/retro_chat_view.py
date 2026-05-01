@@ -3,18 +3,24 @@
 Spec: docs/design/design_handoff_retro_ui/README.md — Screen 2 / Active
 """
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from src.ui import theme as T
 
 _FONT = "Press Start 2P"
 _FB = "DejaVu Sans Mono"
 
-# Font pixel sizes matching spec
-_FZ_TOOL = 11    # spec 7px — tool status rows
-_FZ_RESP = 15    # spec 11px — response text
-_FZ_INPUT = 11   # spec 8px — user input line
+_FZ_TOOL = 14    # spec 7px — tool status rows, SYS OUTPUT header
+_FZ_RESP = 18    # spec 11px — response text
+_FZ_INPUT = 14   # spec 8px — user input line
 
 
 def _ss(color: str, size: int, spacing: int = 1) -> str:
@@ -24,134 +30,204 @@ def _ss(color: str, size: int, spacing: int = 1) -> str:
     )
 
 
-class RetroConversationLog(QTextEdit):
-    """Retro scrolling log: tool events + LLM response text.
+# ── Tool call row ─────────────────────────────────────────────────────────────
 
-    Tool calls are boxed with [EXEC]/[DONE] prefixes.
-    Response text uses 'SYS OUTPUT:' header with cyan text.
-    """
+class RetroToolRow(QFrame):
+    """Bordered container for a single tool call: [EXEC]→[DONE] with result."""
+
+    def __init__(self, name: str, parent=None):
+        super().__init__(parent)
+        self._name = name
+        self._apply_running()
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lay.setSpacing(3)
+
+        self._status_lbl = QLabel(f"[EXEC] {name.upper()}")
+        self._status_lbl.setStyleSheet(_ss("#ffcc00", _FZ_TOOL, 2))
+        lay.addWidget(self._status_lbl)
+
+        self._result_lbl = QLabel()
+        self._result_lbl.setWordWrap(True)
+        self._result_lbl.setStyleSheet(_ss(T.RETRO_TEXT_SECONDARY, _FZ_TOOL, 1))
+        self._result_lbl.setVisible(False)
+        lay.addWidget(self._result_lbl)
+
+    def _apply_running(self):
+        self.setStyleSheet(
+            "RetroToolRow { border: 1px solid #ffcc0040; background-color: #100c00; }"
+        )
+
+    def set_done(self, result: str):
+        self.setStyleSheet(
+            "RetroToolRow { border: 1px solid #00ff6640; background-color: #001808; }"
+        )
+        self._status_lbl.setText(f"[DONE] {self._name.upper()}")
+        self._status_lbl.setStyleSheet(_ss("#00ff66", _FZ_TOOL, 2))
+        if result:
+            short = result[:80] + "…" if len(result) > 80 else result
+            self._result_lbl.setText(short)
+            self._result_lbl.setVisible(True)
+
+
+# ── Scrolling log area ────────────────────────────────────────────────────────
+
+class RetroConversationLog(QScrollArea):
+    """Scrolling log: PROCESSING indicator → bordered tool rows → response."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setReadOnly(True)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.document().setDocumentMargin(14)
+        self.setWidgetResizable(True)
         self.setStyleSheet(
-            f"QTextEdit {{ background-color: {T.RETRO_SURFACE}; color: {T.RETRO_TEXT_PRIMARY}; "
-            f"border-left: 2px solid {T.RETRO_BORDER}; border-right: 2px solid {T.RETRO_BORDER}; "
-            f"border-top: none; border-bottom: none; "
-            f"font-family: '{_FONT}', '{_FB}'; font-size: {_FZ_TOOL}px; line-height: 1.8; }}"
+            f"QScrollArea {{ background-color: {T.RETRO_SURFACE}; "
+            f"border-left: 2px solid {T.RETRO_BORDER}; "
+            f"border-right: 2px solid {T.RETRO_BORDER}; "
+            f"border-top: none; border-bottom: none; }}"
+            f"QWidget {{ background-color: {T.RETRO_SURFACE}; }}"
         )
-        self._tool_cursors: dict[str, QTextCursor] = {}
-        self._has_tool_content = False
-        self._response_started = False
-        self._blink_on = True
 
+        self._container = QWidget()
+        self._container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._lay = QVBoxLayout(self._container)
+        self._lay.setContentsMargins(14, 12, 14, 12)
+        self._lay.setSpacing(6)
+        self._lay.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.setWidget(self._container)
+
+        self._thinking_lbl: QLabel | None = None
+        self._tool_rows: dict[str, RetroToolRow] = {}
+        self._divider: QFrame | None = None
+        self._resp_section: QWidget | None = None
+        self._resp_lbl: QLabel | None = None
+        self._resp_text = ""
+
+        # Streaming cursor blink
+        self._blink_on = True
         self._blink_timer = QTimer(self)
         self._blink_timer.setInterval(530)
         self._blink_timer.timeout.connect(self._blink_tick)
 
-    # ── Tool events ───────────────────────────────────────────────────────────
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def show_thinking(self):
+        """Show PROCESSING... indicator (THINKING state, no tools yet)."""
+        if self._thinking_lbl is not None:
+            return
+        lbl = QLabel("PROCESSING...")
+        lbl.setStyleSheet(_ss("#ffcc00", _FZ_TOOL, 2))
+        self._thinking_lbl = lbl
+        self._lay.addWidget(lbl)
+        self._scroll_to_bottom()
 
     def append_tool_start(self, name: str):
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor("#ffcc00"))
-        f = QFont(_FONT)
-        f.setPixelSize(_FZ_TOOL)
-        f.setWeight(QFont.Weight.Bold)
-        fmt.setFont(f)
-
-        cursor.insertText(f"[EXEC] {name.upper()}\n", fmt)
-        self.setTextCursor(cursor)
-        self.ensureCursorVisible()
-
-        # Save cursor position so we can update this line when done
-        saved = QTextCursor(self.document())
-        saved.movePosition(QTextCursor.MoveOperation.End)
-        saved.movePosition(QTextCursor.MoveOperation.PreviousBlock)
-        saved.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-        saved.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
-        self._tool_cursors[name] = saved
-        self._has_tool_content = True
+        self._remove_thinking()
+        row = RetroToolRow(name)
+        self._tool_rows[name] = row
+        self._lay.addWidget(row)
+        self._scroll_to_bottom()
 
     def update_tool_done(self, name: str, result: str):
-        saved = self._tool_cursors.pop(name, None)
-        if saved is None:
-            return
-
-        short = result[:68] + "…" if len(result) > 68 else result
-        new_text = f"[DONE] {name.upper()}  {short}" if short else f"[DONE] {name.upper()}"
-
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor("#00ff66"))
-        f = QFont(_FONT)
-        f.setPixelSize(_FZ_TOOL)
-        fmt.setFont(f)
-
-        saved.removeSelectedText()
-        saved.insertText(new_text, fmt)
-        self.ensureCursorVisible()
-
-    # ── LLM streaming ─────────────────────────────────────────────────────────
+        row = self._tool_rows.get(name)
+        if row:
+            row.set_done(result)
+        self._scroll_to_bottom()
 
     def append_token(self, token: str):
-        if self._has_tool_content and not self._response_started:
-            self._response_started = True
-            cursor = self.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
+        if self._resp_section is None:
+            self._remove_thinking()
+            # Dashed divider when tools preceded response
+            if self._tool_rows:
+                div = QFrame()
+                div.setFixedHeight(2)
+                div.setStyleSheet(
+                    f"border: none; border-top: 1px dashed {T.RETRO_BORDER}; "
+                    f"background: transparent; margin: 2px 0;"
+                )
+                self._divider = div
+                self._lay.addWidget(div)
 
-            # Dashed divider
-            div_fmt = QTextCharFormat()
-            div_fmt.setForeground(QColor(T.RETRO_BORDER))
-            f = QFont(_FONT)
-            f.setPixelSize(_FZ_TOOL)
-            div_fmt.setFont(f)
-            cursor.insertText("\n" + "─" * 36 + "\n", div_fmt)
+            section = QWidget()
+            section.setStyleSheet("background: transparent;")
+            sec_lay = QVBoxLayout(section)
+            sec_lay.setContentsMargins(0, 0, 0, 0)
+            sec_lay.setSpacing(8)
 
-            # SYS OUTPUT: header
-            hdr_fmt = QTextCharFormat()
-            hdr_fmt.setForeground(QColor(T.RETRO_ACCENT))
-            hdr_f = QFont(_FONT)
-            hdr_f.setPixelSize(_FZ_TOOL)
-            hdr_fmt.setFont(hdr_f)
-            cursor.insertText("SYS OUTPUT:\n", hdr_fmt)
-            self.setTextCursor(cursor)
+            hdr = QLabel("SYS OUTPUT:")
+            hdr.setStyleSheet(_ss(T.RETRO_ACCENT, _FZ_TOOL, 2))
+            sec_lay.addWidget(hdr)
 
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
+            resp = QLabel()
+            resp.setWordWrap(True)
+            resp.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            resp.setStyleSheet(
+                f"color: {T.RETRO_TEXT_PRIMARY}; "
+                f"font-family: '{_FONT}', '{_FB}'; "
+                f"font-size: {_FZ_RESP}px; letter-spacing: 1px; "
+                f"background: transparent;"
+            )
+            sec_lay.addWidget(resp)
 
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(T.RETRO_TEXT_PRIMARY))
-        f = QFont(_FONT)
-        f.setPixelSize(_FZ_RESP)
-        fmt.setFont(f)
+            self._resp_section = section
+            self._resp_lbl = resp
+            self._lay.addWidget(section)
+            self._blink_timer.start()
 
-        cursor.insertText(token, fmt)
-        self.setTextCursor(cursor)
-        self.ensureCursorVisible()
+        self._resp_text += token
+        self._resp_lbl.setText(self._resp_text + " █")
+        self._scroll_to_bottom()
 
     def start_stream(self):
         self._blink_timer.start()
 
     def stop_stream(self):
         self._blink_timer.stop()
-
-    # ── Lifecycle ─────────────────────────────────────────────────────────────
+        if self._resp_lbl:
+            self._resp_lbl.setText(self._resp_text)
 
     def clear_log(self):
-        self.clear()
-        self._tool_cursors.clear()
-        self._has_tool_content = False
-        self._response_started = False
+        self._remove_thinking()
+        for row in list(self._tool_rows.values()):
+            row.setParent(None)
+            row.deleteLater()
+        self._tool_rows.clear()
+        if self._divider:
+            self._divider.setParent(None)
+            self._divider.deleteLater()
+            self._divider = None
+        if self._resp_section:
+            self._resp_section.setParent(None)
+            self._resp_section.deleteLater()
+            self._resp_section = None
+            self._resp_lbl = None
+        self._resp_text = ""
         self._blink_timer.stop()
 
-    def _blink_tick(self):
-        pass  # streaming cursor placeholder — visual handled by token's trailing █ if needed
+    # ── Internal ──────────────────────────────────────────────────────────────
 
+    def _remove_thinking(self):
+        if self._thinking_lbl is not None:
+            self._thinking_lbl.setParent(None)
+            self._thinking_lbl.deleteLater()
+            self._thinking_lbl = None
+
+    def _scroll_to_bottom(self):
+        QTimer.singleShot(10, lambda: self.verticalScrollBar().setValue(
+            self.verticalScrollBar().maximum()
+        ))
+
+    def _blink_tick(self):
+        self._blink_on = not self._blink_on
+        if self._resp_lbl and self._resp_text:
+            cursor = "█" if self._blink_on else " "
+            self._resp_lbl.setText(self._resp_text + " " + cursor)
+
+
+# ── Chat view (input line + log) ──────────────────────────────────────────────
 
 class RetroChatView(QWidget):
     """Retro chat area: 40px user input line + flex ConversationLog."""
@@ -172,7 +248,7 @@ class RetroChatView(QWidget):
 
         # ── User input line (h:40) ───────────────────────────────────────────
         input_row = QWidget()
-        input_row.setFixedHeight(40)
+        input_row.setFixedHeight(46)
         input_row.setStyleSheet(
             f"background-color: #040414; border-bottom: 1px solid {T.RETRO_BORDER};"
         )
@@ -229,18 +305,10 @@ class RetroChatView(QWidget):
         elif state_name == "THINKING":
             self._cursor_lbl.setVisible(False)
             self._blink_timer.stop()
-            # Show PROCESSING indicator in log
-            fmt = QTextCharFormat()
-            fmt.setForeground(QColor("#ffcc00"))
-            f = QFont(_FONT)
-            f.setPixelSize(_FZ_TOOL)
-            fmt.setFont(f)
-            cursor = self._log.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            cursor.insertText("PROCESSING...\n", fmt)
-            self._log.setTextCursor(cursor)
+            self._log.show_thinking()
         elif state_name == "IDLE":
-            # Show placeholder when inactive
+            self._cursor_lbl.setVisible(False)
+            self._blink_timer.stop()
             if not self._input_lbl.text() or self._input_lbl.text() == "RECORDING...":
                 self._input_lbl.setText("---")
                 self._input_lbl.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _FZ_INPUT, 1))
