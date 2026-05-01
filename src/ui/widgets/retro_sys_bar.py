@@ -56,6 +56,9 @@ class RetroSysBar(QWidget):
         k_stt, self._stt_val = _pair("STT")
         k_tps, self._tps_val = _pair("TPS")
 
+        self._radio_pipe = _pipe()
+        self._radio_pipe.setVisible(False)
+
         self._radio_lbl = QLabel()
         self._radio_lbl.setStyleSheet(
             f"color: #4fc3f7; font-family: '{_FONT}', '{_FB}'; "
@@ -75,6 +78,7 @@ class RetroSysBar(QWidget):
             lay.addSpacing(2)
 
         lay.addStretch()
+        lay.addWidget(self._radio_pipe)
         lay.addWidget(self._radio_lbl)
         lay.addWidget(self._ready_lbl)
 
@@ -98,14 +102,18 @@ class RetroSysBar(QWidget):
         self, stt_ms: float, _ttft_ms: float, llm_ms: float, token_count: float, _model: str
     ):
         if stt_ms > 0:
-            self._stt_val.setText(f"{stt_ms:.0f}MS")
+            self._stt_val.setText(f"{stt_ms/1000:.1f}S")
         if llm_ms > 0 and token_count > 0:
             tps = token_count / (llm_ms / 1000)
             self._tps_val.setText(f"{tps:.1f}")
 
     def _on_radio_changed(self, station: str):
         if station:
-            self._radio_lbl.setText(f"| ♪ {station[:18]} |")
+            self._radio_lbl.setText(f"♪ {station[:20]}")
+            self._radio_pipe.setVisible(True)
             self._radio_lbl.setVisible(True)
+            self._ready_lbl.setVisible(False)
         else:
+            self._radio_pipe.setVisible(False)
             self._radio_lbl.setVisible(False)
+            self._ready_lbl.setVisible(True)

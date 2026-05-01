@@ -84,7 +84,7 @@ class RetroStateBar(QWidget):
 
         # Clock timer
         clock_timer = QTimer(self)
-        clock_timer.setInterval(30_000)
+        clock_timer.setInterval(1_000)
         clock_timer.timeout.connect(self._update_clock)
         clock_timer.start()
 
@@ -112,16 +112,7 @@ class RetroStateBar(QWidget):
         self._apply_model(backend_key, model_name)
 
     def on_radio_changed(self, station: str):
-        if station:
-            self._radio_tag.setText(f"♪  {station[:18]}")
-            self._radio_tag.setStyleSheet(
-                f"color: #4fc3f7; font-family: '{_FONT}', '{_FB}'; "
-                f"font-size: 12px; letter-spacing: 1px; border: 1px solid #4fc3f760; "
-                f"background: transparent;"
-            )
-            self._radio_tag.setVisible(True)
-        else:
-            self._radio_tag.setVisible(False)
+        self._radio_tag.setVisible(False)
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
@@ -175,8 +166,7 @@ class RetroStateBar(QWidget):
     def _pulse_tick(self):
         self._pulse_on = not self._pulse_on
         fg = self._state_fg if self._pulse_on else T.RETRO_TEXT_MUTED
-        bg = self._state_bg
-        self._draw_state_tag(fg, bg, self._state_lbl)
+        self._draw_state_tag(fg, self._state_bg, self._state_lbl)
 
     def _update_clock(self):
         self._clock_lbl.setText(datetime.now().strftime("%H:%M"))

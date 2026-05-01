@@ -33,7 +33,7 @@ _FZ_SMALL = 14   # spec 7px  — labels, ASCII bars, status text
 _FZ_BODY = 16    # spec 8px  — header, prompt text
 _FZ_MED = 13     # spec 9px  — time in state bar
 _FZ_RESP = 15    # spec 11px — response text
-_FZ_CLOCK = 88   # spec 64px — clock (scaled for RPi physical display)
+_FZ_CLOCK = 100  # spec 64px — clock (scaled for RPi physical display)
 
 _HEADER_H = 44    # was 40 hardcoded
 _BOTTOM_H = 36    # was 32 hardcoded
@@ -507,7 +507,6 @@ class RetroIdleScreen(QWidget):
         bot_lay.addWidget(k_up)
         bot_lay.addSpacing(4)
         bot_lay.addWidget(self._uptime_val)
-        bot_lay.addWidget(self._radio_lbl)
         bot_lay.addStretch()
         bot_lay.addWidget(_pipe())
         bot_lay.addWidget(self._state_dot)
@@ -568,14 +567,17 @@ class RetroIdleScreen(QWidget):
     def on_radio_changed(self, station: str):
         self._radio_station = station
         if station:
-            self._radio_lbl.setText(f"  │  ♪ {station[:20]}")
-            self._radio_lbl.setVisible(True)
+            self._state_dot.setText("♪")
+            self._state_dot.setStyleSheet(_ss("#4fc3f7", _FZ_SMALL, 0))
+            self._state_dot_lbl.setText(station)
+            self._state_dot_lbl.setStyleSheet(_ss("#4fc3f7", _FZ_SMALL, 2))
         else:
-            self._radio_lbl.setVisible(False)
+            self._update_state_dot(self._state_name)
 
     def on_state_changed(self, state_name: str):
         self._state_name = state_name
-        self._update_state_dot(state_name)
+        if not self._radio_station:
+            self._update_state_dot(state_name)
 
     def on_model_changed(self, backend_key: str, _model_name: str):
         self._active_backend = backend_key

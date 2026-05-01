@@ -250,6 +250,7 @@ class MainWindow(QMainWindow):
         if self._dim_after_s > 0:
             self._dim_timer.start()  # restart countdown
         _wake_screen()
+        QTimer.singleShot(200, self._idle_screen.repaint)
 
     def _on_state_changed(self, state_name: str):
         self._idle_screen.on_state_changed(state_name)

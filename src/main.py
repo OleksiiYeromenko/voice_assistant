@@ -21,7 +21,7 @@ from src.llm.backends import (
     check_ollama_connectivity,
 )
 from src.memory import MarkdownMemoryStore
-from src.monitor import LatencyRecord, Timer, snapshot
+from src.monitor import LatencyRecord, snapshot
 from src.router.router import ModelRouter, RemoteAvailabilityMonitor
 from src.stt.engine import STTEngine
 from src.tools.executor import execute_tool, register_tool
@@ -124,22 +124,31 @@ def _create_token_gen(
 
     def token_gen():
         first_token_seen = False
-        with Timer() as t:
-            for chunk in backend.stream(messages, tools=tools, system=system):
-                if chunk.text:
-                    if not first_token_seen:
-                        first_token_seen = True
-                        if is_first_round:
-                            latency.llm_first_token_ms = t.mark()
-                    latency.token_count += 1
-                    if ui_bus is not None:
-                        ui_bus.text_chunk.emit(chunk.text)
-                    yield chunk.text
-                if chunk.thinking:
-                    log.debug(f"[think] {chunk.thinking}")
-                if tool_calls_list is not None:
-                    tool_calls_list.extend(chunk.tool_calls)
-        latency.llm_ms += t.elapsed_ms
+        _generation_ms = 0.0
+        stream = iter(backend.stream(messages, tools=tools, system=system))
+        while True:
+            _t0 = time.perf_counter()
+            try:
+                chunk = next(stream)
+            except StopIteration:
+                break
+            _generation_ms += (time.perf_counter() - _t0) * 1000
+
+            if chunk.text:
+                if not first_token_seen:
+                    first_token_seen = True
+                    if is_first_round:
+                        latency.llm_first_token_ms = _generation_ms
+                latency.token_count += 1
+                if ui_bus is not None:
+                    ui_bus.text_chunk.emit(chunk.text)
+                yield chunk.text
+            if chunk.thinking:
+                log.debug(f"[think] {chunk.thinking}")
+            if tool_calls_list is not None:
+                tool_calls_list.extend(chunk.tool_calls)
+
+        latency.llm_ms += _generation_ms
         latency.model_used = backend.name
 
     return token_gen

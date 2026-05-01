@@ -2,6 +2,8 @@
 
 Spec: docs/design/design_handoff_retro_ui/README.md — Screen 2 / Active
 """
+import html as _html
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QFrame,
@@ -56,12 +58,12 @@ class RetroToolRow(QFrame):
 
     def _apply_running(self):
         self.setStyleSheet(
-            "RetroToolRow { border: 1px solid #ffcc0040; background-color: #100c00; }"
+            "RetroToolRow { border: 1px solid rgba(255, 204, 0, 64); background-color: #100c00; }"
         )
 
     def set_done(self, result: str):
         self.setStyleSheet(
-            "RetroToolRow { border: 1px solid #00ff6640; background-color: #001808; }"
+            "RetroToolRow { border: 1px solid rgba(0, 255, 102, 64); background-color: #001808; }"
         )
         self._status_lbl.setText(f"[DONE] {self._name.upper()}")
         self._status_lbl.setStyleSheet(_ss("#00ff66", _FZ_TOOL, 2))
@@ -83,9 +85,7 @@ class RetroConversationLog(QScrollArea):
         self.setWidgetResizable(True)
         self.setStyleSheet(
             f"QScrollArea {{ background-color: {T.RETRO_SURFACE}; "
-            f"border-left: 2px solid {T.RETRO_BORDER}; "
-            f"border-right: 2px solid {T.RETRO_BORDER}; "
-            f"border-top: none; border-bottom: none; }}"
+            f"border: 2px solid {T.RETRO_BORDER}; }}"
             f"QWidget {{ background-color: {T.RETRO_SURFACE}; }}"
         )
 
@@ -94,8 +94,8 @@ class RetroConversationLog(QScrollArea):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         self._lay = QVBoxLayout(self._container)
-        self._lay.setContentsMargins(14, 12, 14, 12)
-        self._lay.setSpacing(6)
+        self._lay.setContentsMargins(14, 16, 14, 12)
+        self._lay.setSpacing(8)
         self._lay.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.setWidget(self._container)
 
@@ -146,7 +146,7 @@ class RetroConversationLog(QScrollArea):
                 div.setFixedHeight(2)
                 div.setStyleSheet(
                     f"border: none; border-top: 1px dashed {T.RETRO_BORDER}; "
-                    f"background: transparent; margin: 2px 0;"
+                    f"background: transparent; margin: 10px 0;"
                 )
                 self._divider = div
                 self._lay.addWidget(div)
@@ -154,8 +154,8 @@ class RetroConversationLog(QScrollArea):
             section = QWidget()
             section.setStyleSheet("background: transparent;")
             sec_lay = QVBoxLayout(section)
-            sec_lay.setContentsMargins(0, 0, 0, 0)
-            sec_lay.setSpacing(8)
+            sec_lay.setContentsMargins(0, 8, 0, 0)
+            sec_lay.setSpacing(12)
 
             hdr = QLabel("SYS OUTPUT:")
             hdr.setStyleSheet(_ss(T.RETRO_ACCENT, _FZ_TOOL, 2))
@@ -163,13 +163,8 @@ class RetroConversationLog(QScrollArea):
 
             resp = QLabel()
             resp.setWordWrap(True)
+            resp.setTextFormat(Qt.TextFormat.RichText)
             resp.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-            resp.setStyleSheet(
-                f"color: {T.RETRO_TEXT_PRIMARY}; "
-                f"font-family: '{_FONT}', '{_FB}'; "
-                f"font-size: {_FZ_RESP}px; letter-spacing: 1px; "
-                f"background: transparent;"
-            )
             sec_lay.addWidget(resp)
 
             self._resp_section = section
@@ -178,7 +173,7 @@ class RetroConversationLog(QScrollArea):
             self._blink_timer.start()
 
         self._resp_text += token
-        self._resp_lbl.setText(self._resp_text + " █")
+        self._resp_lbl.setText(self._resp_html(self._resp_text, True))
         self._scroll_to_bottom()
 
     def start_stream(self):
@@ -187,7 +182,7 @@ class RetroConversationLog(QScrollArea):
     def stop_stream(self):
         self._blink_timer.stop()
         if self._resp_lbl:
-            self._resp_lbl.setText(self._resp_text)
+            self._resp_lbl.setText(self._resp_html(self._resp_text, False))
 
     def clear_log(self):
         self._remove_thinking()
@@ -209,6 +204,17 @@ class RetroConversationLog(QScrollArea):
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
+    def _resp_html(self, text: str, cursor_visible: bool = False) -> str:
+        escaped = _html.escape(text)
+        cursor_color = T.RETRO_ACCENT if cursor_visible else "transparent"
+        cursor_span = f' <span style="color: {cursor_color};">█</span>'
+        return (
+            f"<p style=\"font-family: '{_FONT}', '{_FB}'; "
+            f"font-size: {_FZ_RESP}px; color: {T.RETRO_TEXT_PRIMARY}; "
+            f'letter-spacing: 1px; line-height: 2.2; margin: 0;">'
+            f"{escaped}{cursor_span}</p>"
+        )
+
     def _remove_thinking(self):
         if self._thinking_lbl is not None:
             self._thinking_lbl.setParent(None)
@@ -223,8 +229,7 @@ class RetroConversationLog(QScrollArea):
     def _blink_tick(self):
         self._blink_on = not self._blink_on
         if self._resp_lbl and self._resp_text:
-            cursor = "█" if self._blink_on else " "
-            self._resp_lbl.setText(self._resp_text + " " + cursor)
+            self._resp_lbl.setText(self._resp_html(self._resp_text, self._blink_on))
 
 
 # ── Chat view (input line + log) ──────────────────────────────────────────────
@@ -269,8 +274,9 @@ class RetroChatView(QWidget):
 
         ir_lay.addWidget(self._prompt_sym)
         ir_lay.addSpacing(8)
-        ir_lay.addWidget(self._input_lbl, stretch=1)
+        ir_lay.addWidget(self._input_lbl)
         ir_lay.addWidget(self._cursor_lbl)
+        ir_lay.addStretch()
 
         # ── Log area ─────────────────────────────────────────────────────────
         self._log = RetroConversationLog(self)
