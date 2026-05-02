@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 class ToolCall:
     name: str
     arguments: dict[str, Any]
+    thought_signature: bytes | None = None  # Gemini thinking models only
 
 
 @dataclass
@@ -60,6 +61,25 @@ def check_ollama_connectivity(base_url: str, timeout: float = 3.0) -> bool:
             return r.status == 200
     except Exception:
         return False
+
+
+def get_running_remote_model(base_url: str, timeout: float = 3.0) -> str | None:
+    """Return the name of the largest model currently loaded in RAM on a remote Ollama, or None."""
+    import re
+
+    def _size_b(name: str) -> float:
+        m = re.search(r":?(\d+(?:\.\d+)?)b", name.lower())
+        return float(m.group(1)) if m else 0.0
+
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/ps", timeout=timeout) as r:
+            models = json.loads(r.read()).get("models", [])
+        names = [m["model"] for m in models if m.get("model")]
+        if names:
+            return max(names, key=_size_b)
+    except Exception:
+        pass
+    return None
 
 
 def check_llama_cpp_connectivity(base_url: str, timeout: float = 3.0) -> bool:
@@ -656,15 +676,23 @@ class GeminiBackend:
                 config=config,
             )
             for chunk in response:
-                # Check for function calls first
-                fc_list = getattr(chunk, "function_calls", None)
-                if fc_list:
+                # Access raw parts to preserve thought_signature for thinking models
+                parts = []
+                try:
+                    parts = chunk.candidates[0].content.parts or []
+                except (AttributeError, IndexError):
+                    pass
+
+                fc_parts = [p for p in parts if p.function_call is not None]
+                if fc_parts:
                     tool_calls = []
-                    for fc in fc_list:
+                    for part in fc_parts:
+                        fc = part.function_call
                         tool_calls.append(
                             ToolCall(
                                 name=fc.name,
                                 arguments=dict(fc.args) if fc.args else {},
+                                thought_signature=part.thought_signature or None,
                             )
                         )
                     yield LLMChunk(tool_calls=tool_calls, model=self.name)
@@ -724,12 +752,14 @@ class GeminiBackend:
                 if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
                         fn = tc.get("function", tc)  # support both nested and flat
+                        thought_sig = tc.get("thought_signature") or fn.get("thought_signature")
                         parts.append(
                             types.Part(
                                 function_call=types.FunctionCall(
                                     name=fn["name"],
                                     args=fn.get("arguments", {}),
-                                )
+                                ),
+                                thought_signature=thought_sig,
                             )
                         )
                 if not parts:

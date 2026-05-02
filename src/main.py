@@ -19,6 +19,7 @@ from src.llm.backends import (
     OllamaBackend,
     ToolCall,
     check_ollama_connectivity,
+    get_running_remote_model,
 )
 from src.memory import MarkdownMemoryStore
 from src.monitor import LatencyRecord, snapshot
@@ -42,25 +43,19 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
     """Create LLM backends from config.
 
     Returns (backends, default_key) where default_key is "remote" if the GPU
-    PC Ollama is reachable at startup, otherwise "local" (localhost fallback).
+    PC Ollama is reachable and has a usable model, otherwise "local".
+
+    Remote model selection:
+      1. Use whatever model is currently loaded in RAM on the remote (/api/ps).
+      2. If nothing running, the configured remote_model will be activated by
+         the warm-up loop; if that fails (404) the warm-up loop demotes to local.
     """
     backends = {}
     llm_cfg = cfg["llm"]
     remote_url = llm_cfg.get("remote_base_url", "http://192.168.1.74:11434")
     local_url = llm_cfg.get("local_base_url", "http://localhost:11434")
     model_cfg = llm_cfg["local"]
-
-    # Remote backend (GPU PC)
-    backends["remote"] = OllamaBackend(
-        model=model_cfg["model"],
-        base_url=remote_url,
-        temperature=model_cfg["temperature"],
-        num_ctx=model_cfg["num_ctx"],
-        num_predict=model_cfg.get("num_predict"),
-        num_thread=model_cfg.get("num_thread"),
-        think=model_cfg.get("think", False),
-        label="remote",
-    )
+    preferred_remote_model = llm_cfg.get("remote_model", model_cfg["model"])
 
     # Local backend (RPi llama.cpp server — always-available fallback)
     backends["local"] = LlamaCppBackend(
@@ -71,10 +66,28 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
         label="local",
     )
 
-    # Connectivity check: prefer remote (GPU PC) if reachable
+    # Remote backend (GPU PC) — only registered if Ollama is reachable
     if check_ollama_connectivity(remote_url):
-        log.info(f"GPU PC Ollama reachable at {remote_url} — using as default")
+        # Use whichever model is already in RAM; fall back to preferred_remote_model
+        running = get_running_remote_model(remote_url)
+        remote_model = running or preferred_remote_model
+        if running:
+            log.info(f"GPU PC Ollama: using running model '{remote_model}'")
+        else:
+            log.info(f"GPU PC Ollama: no model in RAM, will activate '{remote_model}'")
+
+        backends["remote"] = OllamaBackend(
+            model=remote_model,
+            base_url=remote_url,
+            temperature=model_cfg["temperature"],
+            num_ctx=model_cfg["num_ctx"],
+            num_predict=model_cfg.get("num_predict"),
+            num_thread=model_cfg.get("num_thread"),
+            think=model_cfg.get("think", False),
+            label="remote",
+        )
         default_key = "remote"
+        log.info(f"GPU PC Ollama reachable at {remote_url} — using as default")
     else:
         log.warning(f"GPU PC Ollama not reachable at {remote_url} — falling back to localhost")
         default_key = "local"
@@ -219,7 +232,14 @@ def run_llm_with_tools(
                     "role": "assistant",
                     "content": text_buffer or "",
                     "tool_calls": [
-                        {"function": {"name": tc.name, "arguments": tc.arguments}}
+                        {
+                            "function": {"name": tc.name, "arguments": tc.arguments},
+                            **(
+                                {"thought_signature": tc.thought_signature}
+                                if tc.thought_signature
+                                else {}
+                            ),
+                        }
                         for tc in tool_calls
                     ],
                 }
@@ -462,6 +482,8 @@ def assistant_loop(cfg: dict):
 
     # Warm-start: preload model(s) into RAM.
     # Retry up to 3 times per backend in case Ollama wasn't fully ready at boot.
+    # If the remote model is not installed (404), remote is removed from backends
+    # and default_key falls back to local so no 404 is hit on every query.
     warm_keys = [default_key]
     if default_key != "local":
         warm_keys.append("local")
@@ -469,13 +491,15 @@ def assistant_loop(cfg: dict):
         b = backends.get(key)
         if not b or not hasattr(b, "warm"):
             continue
+        permanent_failure = False
         for attempt in range(3):
             try:
                 b.warm()
             except Exception as e:
                 if "404" in str(e).lower() or "not found" in str(e).lower():
-                    log.warning(f"{key}: model not installed on server — skipping retries")
-                    break  # permanent failure; retrying won't help
+                    log.warning(f"{key}: model not installed on server — marking remote as failed")
+                    permanent_failure = True
+                    break  # retrying won't help
                 # transient error (connection refused, timeout) — fall through to retry
             if hasattr(b, "is_loaded") and b.is_loaded():
                 log.info(f"{key} model confirmed loaded in Ollama RAM")
@@ -491,6 +515,10 @@ def assistant_loop(cfg: dict):
                 f"{key} model NOT confirmed in Ollama RAM after 3 attempts — "
                 f"first query may be slow"
             )
+        if permanent_failure and key == default_key and key != "local":
+            log.warning(f"Demoting default from '{key}' to 'local'")
+            backends.pop(key, None)
+            default_key = "local"
 
     # Background monitor: re-checks remote Ollama every 60s so the router
     # can switch default_backend_key dynamically if GPU PC goes down or comes back.
