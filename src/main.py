@@ -253,6 +253,11 @@ def run_llm_with_tools(
                 result = execute_tool(tc.name, tc.arguments, backend=backend)
                 if ui_bus is not None:
                     ui_bus.tool_done.emit(tc.name, str(result)[:80])
+                if tc.name == "get_recipe" and ui_bus is not None:
+                    from src.tools.recipes import parse_recipe_result
+                    recipe_data = parse_recipe_result(result)
+                    if recipe_data:
+                        ui_bus.recipe_ready.emit(recipe_data)
                 messages.append(
                     {
                         "role": "tool",

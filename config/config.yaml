@@ -119,6 +119,7 @@ display:
   theme: retro               # "retro" = pixel/CRT style | "default" = dark minimal
   dim_after_idle_s: 60       # Seconds of idle before dimming backlight to minimum (0 = disabled)
   dim_min_level: 1           # Backlight value to set when dimming (0 = off, 1 = faintest visible)
+  recipe_timeout_s: 300      # Seconds before recipe screen auto-dismisses to idle (0 = never)
 
 # --- Resource Monitoring ---
 monitor:

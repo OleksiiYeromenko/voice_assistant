@@ -88,9 +88,9 @@ GET_RECIPE_TOOL = {
         ),
         "parameters": {
             "type": "object",
-            "required": ["name"],
+            "required": ["recipe_name"],
             "properties": {
-                "name": {
+                "recipe_name": {
                     "type": "string",
                     "description": "English recipe name or keyword to search for",
                 },
@@ -105,7 +105,7 @@ GET_RECIPE_TOOL = {
 # ---------------------------------------------------------------------------
 
 
-def get_recipe(name: str) -> str:
+def get_recipe(recipe_name: str) -> str:
     """Search Notion family recipes by English title and return the recipe."""
     api_key = os.getenv("NOTION_API_KEY", "")
     db_id = _db_id()
@@ -121,7 +121,7 @@ def get_recipe(name: str) -> str:
                 f"{_NOTION_API}/databases/{db_id}/query",
                 headers=_notion_headers(),
                 json={
-                    "filter": {"property": "Title EN", "rich_text": {"contains": name}},
+                    "filter": {"property": "Title EN", "rich_text": {"contains": recipe_name}},
                     "page_size": 1,
                 },
             )
@@ -129,14 +129,14 @@ def get_recipe(name: str) -> str:
             results = r.json().get("results", [])
 
         if not results:
-            return f"Recipe '{name}' not found in the Recipe Library."
+            return f"Recipe '{recipe_name}' not found in the Recipe Library."
 
         page_id = results[0]["id"]
         title = (
             _notion_text(
                 results[0].get("properties", {}).get("Title EN", {}).get("rich_text", [])
             )
-            or name
+            or recipe_name
         )
 
         sections = _parse_blocks(_all_blocks(page_id))
@@ -155,3 +155,38 @@ def get_recipe(name: str) -> str:
     except Exception as e:
         log.error(f"get_recipe error: {e}")
         return f"ERROR: Could not fetch recipe: {e}."
+
+
+def parse_recipe_result(text: str) -> dict | None:
+    """Parse the formatted string from get_recipe into a structured dict.
+
+    Returns {"title": str, "ingredients": list[str], "instructions": list[str]}
+    or None if the text looks like an error or has no content.
+    """
+    if not text or text.startswith("ERROR") or text.startswith("Recipe '"):
+        return None
+
+    title = ""
+    ingredients: list[str] = []
+    instructions: list[str] = []
+    section: str | None = None
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if raw.startswith("Recipe: "):
+            title = raw[len("Recipe: "):]
+        elif line == "Ingredients:":
+            section = "ingredients"
+        elif line == "Instructions:":
+            section = "instructions"
+        elif section == "ingredients" and line.startswith("- "):
+            ingredients.append(line[2:])
+        elif section == "instructions" and line and line[0].isdigit():
+            parts = line.split(". ", 1)
+            if len(parts) == 2:
+                instructions.append(parts[1])
+
+    if not title or (not ingredients and not instructions):
+        return None
+
+    return {"title": title, "ingredients": ingredients, "instructions": instructions}

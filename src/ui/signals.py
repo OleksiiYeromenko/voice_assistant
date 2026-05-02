@@ -45,5 +45,8 @@ class UIEventBus(QObject):
     # Radio playback changed: station name when playing, "" when stopped
     radio_changed = pyqtSignal(str)
 
+    # Recipe fetched: dict with keys title, ingredients, instructions
+    recipe_ready = pyqtSignal(object)
+
     # FSM has exited — time to close the window
     shutdown_requested = pyqtSignal()

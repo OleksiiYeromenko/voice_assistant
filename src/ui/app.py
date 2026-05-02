@@ -30,6 +30,7 @@ from src.ui.signals import UIEventBus
 from src.ui.theme import MAIN_STYLESHEET
 from src.ui.widgets.chat_view import ChatView
 from src.ui.widgets.idle_screen import IdleScreen
+from src.ui.widgets.recipe_view import RecipeView
 from src.ui.widgets.retro_chat_view import RetroChatView
 from src.ui.widgets.retro_idle_screen import RetroIdleScreen
 from src.ui.widgets.retro_state_bar import RetroStateBar
@@ -141,6 +142,7 @@ class MainWindow(QMainWindow):
         dim_level: int = 0,
         ui_theme: str = "default",
         full_cfg: dict | None = None,
+        recipe_timeout_s: int = 300,
     ):
         super().__init__()
         self._bus = bus
@@ -191,6 +193,10 @@ class MainWindow(QMainWindow):
 
         self._stack.addWidget(active)
 
+        # Page 2 — recipe screen
+        self._recipe_view = RecipeView(self)
+        self._stack.addWidget(self._recipe_view)
+
         # Start on idle screen
         self._stack.setCurrentIndex(0)
 
@@ -199,6 +205,12 @@ class MainWindow(QMainWindow):
         self._idle_timer.setSingleShot(True)
         self._idle_timer.setInterval(_IDLE_SWITCH_DELAY_MS)
         self._idle_timer.timeout.connect(lambda: self._stack.setCurrentIndex(0))
+
+        # ── Recipe auto-dismiss timer ─────────────────────────────────────────
+        self._recipe_timeout_ms = max(0, recipe_timeout_s) * 1000
+        self._recipe_timer = QTimer(self)
+        self._recipe_timer.setSingleShot(True)
+        self._recipe_timer.timeout.connect(lambda: self._stack.setCurrentIndex(0))
 
         # ── Backlight dim timer ───────────────────────────────────────────────
         self._dim_timer = QTimer(self)
@@ -216,6 +228,7 @@ class MainWindow(QMainWindow):
         bus.resource_updated.connect(self._on_resource_updated)
         bus.shutdown_requested.connect(self._on_shutdown)
         bus.radio_changed.connect(self._idle_screen.on_radio_changed)
+        bus.recipe_ready.connect(self._on_recipe_ready)
         if is_retro and hasattr(self._idle_screen, "on_model_changed"):
             bus.model_changed.connect(self._idle_screen.on_model_changed)
 
@@ -254,15 +267,30 @@ class MainWindow(QMainWindow):
     def _on_state_changed(self, state_name: str):
         self._idle_screen.on_state_changed(state_name)
         if state_name in _IDLE_STATES:
-            self._idle_timer.start()  # switch to clock after delay
+            # Recipe screen has its own timer; suppress the normal 20s idle switch
+            if self._stack.currentIndex() != 2:
+                self._idle_timer.start()  # switch to clock after delay
             if self._dim_after_s > 0:
                 self._dim_timer.start()  # dim backlight after longer delay
         else:
             self._idle_timer.stop()  # cancel pending idle switch
             self._dim_timer.stop()  # cancel pending dim
             self._backlight.restore()
-            self._stack.setCurrentIndex(1)  # show active immediately
+            if state_name == "LISTENING":
+                # New user interaction — always dismiss recipe screen and show active
+                self._recipe_timer.stop()
+                self._stack.setCurrentIndex(1)
+            elif self._stack.currentIndex() != 2:
+                # THINKING/SPEAKING: keep recipe visible; otherwise show active
+                self._stack.setCurrentIndex(1)
             _wake_screen()
+
+    def _on_recipe_ready(self, data: object):
+        self._recipe_view.load_recipe(data)
+        self._idle_timer.stop()  # suppress normal 20s idle switch
+        self._stack.setCurrentIndex(2)
+        if self._recipe_timeout_ms > 0:
+            self._recipe_timer.start(self._recipe_timeout_ms)
 
     def _on_resource_updated(
         self,
@@ -357,6 +385,7 @@ def run_ui(fsm) -> int:
         dim_level=int(display_cfg.get("dim_min_level", 0)),
         ui_theme=str(display_cfg.get("theme", "default")),
         full_cfg=full_cfg,
+        recipe_timeout_s=int(display_cfg.get("recipe_timeout_s", 300)),
     )
     window.show_fullscreen_rpi()
 
