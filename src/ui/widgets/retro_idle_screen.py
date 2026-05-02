@@ -221,6 +221,11 @@ class BackendRow(QWidget):
         glow.setOffset(0, 0)
         self._act.setGraphicsEffect(glow)
         self._act.setVisible(False)
+        # Retain layout space when hidden — prevents QGraphicsEffect bounding-rect
+        # miscalculation from shifting the row width on visibility changes.
+        _act_sp = self._act.sizePolicy()
+        _act_sp.setRetainSizeWhenHidden(True)
+        self._act.setSizePolicy(_act_sp)
 
         lay.addWidget(self._lbl)
         lay.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -367,6 +372,7 @@ class RetroIdleScreen(QWidget):
         self._net_dot = QLabel("■")
         self._net_dot.setStyleSheet(_ss("#ff4444", _FZ_SMALL - 3, 0))
         self._net_status_lbl = QLabel("OFFLN")
+        self._net_status_lbl.setFixedWidth(70)  # fits "OFFLN" at _FZ_SMALL — prevents width changes from causing layout drift
         self._net_status_lbl.setStyleSheet(_ss("#ff4444", _FZ_SMALL, 1))
         net_glow = QGraphicsDropShadowEffect()
         net_glow.setBlurRadius(5)
@@ -419,6 +425,9 @@ class RetroIdleScreen(QWidget):
         self._prompt_cursor = QLabel("█")
         self._prompt_cursor.setFixedWidth(20)
         self._prompt_cursor.setStyleSheet(_ss(T.RETRO_ACCENT, _FZ_BODY, 0))
+        _cursor_sp = self._prompt_cursor.sizePolicy()
+        _cursor_sp.setRetainSizeWhenHidden(True)
+        self._prompt_cursor.setSizePolicy(_cursor_sp)
 
         pr_lay.addWidget(prompt_gt)
         pr_lay.addSpacing(8)
@@ -600,9 +609,9 @@ class RetroIdleScreen(QWidget):
     def _tick_blink(self):
         self._blink = not self._blink
 
-        # Toggle color instead of text to avoid triggering a layout recalculation
-        cursor_color = T.RETRO_ACCENT if self._blink else "transparent"
-        self._prompt_cursor.setStyleSheet(_ss(cursor_color, _FZ_BODY, 0))
+        # setVisible avoids setStyleSheet's style-repolish propagation that can
+        # corrupt parent layout geometry after many idle cycles on xcb/X11.
+        self._prompt_cursor.setVisible(self._blink)
 
         # Radio ♪ blink
         if self._radio_station and self._radio_lbl.isVisible():
