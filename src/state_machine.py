@@ -210,7 +210,7 @@ class AssistantFSM:
     # ------------------------------------------------------------------
     def _state_thinking(self, ctx: dict) -> tuple[State, dict]:
         """Route, run LLM with tools, stream TTS."""
-        from src.llm.backends import GeminiBackend, LlamaCppBackend, OllamaBackend
+        from src.llm.backends import ClaudeBackend, GeminiBackend, LlamaCppBackend, OllamaBackend
         from src.main import run_llm_with_tools, run_streaming_llm
         from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
         from src.tools.executor import ALL_TOOLS, VOLATILE_TOOLS
@@ -256,7 +256,7 @@ class AssistantFSM:
         # LLM + Tools + TTS
         tools_used: set[str] = set()
         try:
-            if isinstance(backend, (OllamaBackend, LlamaCppBackend, GeminiBackend)):
+            if isinstance(backend, (OllamaBackend, LlamaCppBackend, GeminiBackend, ClaudeBackend)):
                 response, tools_used = run_llm_with_tools(
                     backend,
                     list(recent),
@@ -291,7 +291,7 @@ class AssistantFSM:
                 if self.ui_bus is not None:
                     self.ui_bus.model_changed.emit(fallback_key, fallback.name)
                 try:
-                    if isinstance(fallback, (OllamaBackend, LlamaCppBackend, GeminiBackend)):
+                    if isinstance(fallback, (OllamaBackend, LlamaCppBackend, GeminiBackend, ClaudeBackend)):
                         response, tools_used = run_llm_with_tools(
                             fallback,
                             list(recent),
