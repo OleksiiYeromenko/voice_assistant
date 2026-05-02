@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
+import re
 import socket
 import subprocess
 import threading
@@ -37,6 +39,26 @@ _paused_url: str | None = None  # saved URL so resume() can restart
 _paused_station: str | None = None  # saved station name for display
 
 _radio_change_callback = None  # (station_name: str) → None; "" means stopped
+
+_COUNTRY_KEYWORDS: dict[str, str] = {
+    "ukraine": "UA", "ukrainian": "UA",
+    "germany": "DE", "german": "DE",
+    "france": "FR", "french": "FR",
+    "uk": "GB", "britain": "GB", "british": "GB", "england": "GB",
+    "us": "US", "usa": "US", "america": "US", "american": "US",
+    "canada": "CA", "canadian": "CA",
+    "australia": "AU", "australian": "AU",
+    "poland": "PL", "polish": "PL",
+    "spain": "ES", "spanish": "ES",
+    "italy": "IT", "italian": "IT",
+    "netherlands": "NL", "dutch": "NL",
+    "sweden": "SE", "swedish": "SE",
+    "norway": "NO", "norwegian": "NO",
+    "finland": "FI", "finnish": "FI",
+    "japan": "JP", "japanese": "JP",
+    "brazil": "BR", "brazilian": "BR",
+    "india": "IN", "indian": "IN",
+}
 _ipc_path: str = "/tmp/va-mpv.sock"
 _radio_browser_base: str = "https://de1.api.radio-browser.info"
 _search_limit: int = 5
@@ -103,8 +125,17 @@ def play_radio(query: str) -> str:
     if not query:
         return "I need a station name or genre to play."
 
+    want_random, country_code, genre = _parse_radio_query(query)
+    search_limit = 10 if want_random else _search_limit
+    name_query = re.sub(r'\brandom\b', '', query, flags=re.I).strip()
+
     try:
-        stations = _search_radio_browser(query)
+        stations = _search_radio_browser(
+            genre or name_query,
+            country_code=country_code,
+            name_fallback=name_query,
+            limit=search_limit,
+        )
     except Exception as e:
         log.error(f"Radio Browser search failed: {e}")
         return f"Couldn't reach the radio directory: {e}"
@@ -112,28 +143,20 @@ def play_radio(query: str) -> str:
     if not stations:
         return f"No stations found for '{query}'."
 
-    chosen_name: str | None = None
-    chosen_url: str | None = None
-    for s in stations:
-        url = s.get("url_resolved") or s.get("url")
-        name = s.get("name", "").strip() or query
-        if url:
-            chosen_name = name
-            chosen_url = url
-            break
-
-    if chosen_name is None:
+    chosen = random.choice(stations) if want_random else stations[0]
+    url = chosen.get("url_resolved") or chosen.get("url")
+    name = chosen.get("name", "").strip() or query
+    if not url:
         return f"No playable station found for '{query}'."
 
     with _lock:
-        _stop_locked()  # stop anything currently playing
-        # Queue for deferred playback — resume() fires at end of THINKING after TTS.
+        _stop_locked()
         _was_playing_before_pause = True
-        _paused_url = chosen_url
-        _paused_station = chosen_name
+        _paused_url = url
+        _paused_station = name
 
-    log.info(f"Queued radio station '{chosen_name}' for post-TTS playback: {chosen_url}")
-    return f"Playing {chosen_name}."
+    log.info(f"Queued radio station '{name}' for post-TTS playback: {url}")
+    return f"Playing {name}."
 
 
 def stop_playback() -> str:
@@ -267,32 +290,66 @@ def _clamp_volume(v) -> int:
     return max(0, min(100, v))
 
 
-def _search_radio_browser(query: str) -> list[dict]:
-    """Return up to ``_search_limit`` candidate stations, best-first.
+def _parse_radio_query(query: str) -> tuple[bool, str | None, str]:
+    """Extract (want_random, country_code, genre) from a free-text query."""
+    want_random = bool(re.search(r'\brandom\b', query, re.I))
+    text = re.sub(r'\brandom\b', '', query, flags=re.I)
 
-    Tries a name search first, then falls back to a tag search if nothing hits.
-    ``hidebroken=true`` filters stations Radio Browser knows are down.
-    """
+    words = text.lower().split()
+    country_code: str | None = None
+    remaining: list[str] = []
+    for word in words:
+        clean = re.sub(r'[^\w]', '', word)
+        if clean in _COUNTRY_KEYWORDS:
+            country_code = _COUNTRY_KEYWORDS[clean]
+        else:
+            remaining.append(word)
+
+    genre = " ".join(remaining)
+    genre = re.sub(r'\b(radio|station|from|in|the|a|an|some|music)\b', '', genre, flags=re.I)
+    genre = re.sub(r'\s+', ' ', genre).strip()
+    return want_random, country_code, genre
+
+
+def _search_radio_browser(
+    query: str,
+    country_code: str | None = None,
+    name_fallback: str | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    """Cascade search: country+tag → tag → name. Returns best-first list."""
     params_common = {
         "hidebroken": "true",
         "order": "clickcount",
         "reverse": "true",
-        "limit": str(_search_limit),
+        "limit": str(limit or _search_limit),
     }
     headers = {"User-Agent": "voice-assistant/0.1 (+radio-playback)"}
 
-    def _get(path: str, extra: dict) -> list[dict]:
-        url = f"{_radio_browser_base.rstrip('/')}{path}"
-        params = {**params_common, **extra}
-        r = httpx.get(url, params=params, headers=headers, timeout=_request_timeout_s)
+    def _get(extra: dict) -> list[dict]:
+        url = f"{_radio_browser_base.rstrip('/')}/json/stations/search"
+        r = httpx.get(
+            url, params={**params_common, **extra}, headers=headers, timeout=_request_timeout_s
+        )
         r.raise_for_status()
         data = r.json()
         return data if isinstance(data, list) else []
 
-    results = _get("/json/stations/search", {"name": query})
-    if not results:
-        results = _get("/json/stations/search", {"tag": query})
-    return results
+    if query and country_code:
+        results = _get({"tag": query, "countrycode": country_code})
+        if results:
+            return results
+
+    if query:
+        results = _get({"tag": query})
+        if results:
+            return results
+
+    fallback = name_fallback or query
+    if fallback:
+        return _get({"name": fallback})
+
+    return []
 
 
 def _start_mpv_locked(url: str, station_name: str, start_paused: bool = True) -> None:

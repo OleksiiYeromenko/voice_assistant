@@ -25,6 +25,32 @@ log = logging.getLogger(__name__)
 
 SENTENCE_RE = re.compile(r"\.(?!\d)\s+|[!?;]\s+")
 
+_AMIXER_CONTROLS = ("PCM", "Master", "Speaker", "Headphone")
+
+
+def _parse_card_number(aplay_device: str) -> str | None:
+    m = re.match(r"(?:plug)?hw:(\d+)", aplay_device)
+    return m.group(1) if m else None
+
+
+def _apply_amixer_volume(card: str, level: int) -> None:
+    for ctrl in _AMIXER_CONTROLS:
+        try:
+            r = subprocess.run(
+                ["amixer", "-c", card, "sset", ctrl, f"{level}%"],
+                capture_output=True,
+                timeout=2,
+            )
+            if r.returncode == 0:
+                log.info("TTS volume: set '%s' on card %s to %d%%", ctrl, card, level)
+                return
+        except FileNotFoundError:
+            log.warning("amixer not found — TTS volume setting skipped")
+            return
+        except subprocess.TimeoutExpired:
+            continue
+    log.warning("TTS volume: no working control found on card %s (tried %s)", card, _AMIXER_CONTROLS)
+
 
 class _DelayedSound:
     """Plays a WAV after a configurable delay in a background thread. Cancellable.
@@ -83,6 +109,7 @@ class TTSEngine:
         voice: str = "./voices/en_US-hfc_male-medium.onnx",
         aplay_device: str = "plughw:0,0",
         sounds_dir: str = "./sounds",
+        volume: int = 80,
     ):
         self.voice = voice
         self.aplay_device = aplay_device
@@ -91,6 +118,7 @@ class TTSEngine:
         self._greeting_sounds: list[Path] = []
         self._thinking_sounds: list[Path] = []
         self._load_sounds(sounds_dir)
+        self._apply_volume(max(0, min(100, int(volume))))
 
     # ------------------------------------------------------------------
     # Sound bank (pre-recorded WAV files)
@@ -110,6 +138,13 @@ class TTSEngine:
             target_list.extend(sorted(category_dir.glob("*.wav")))
             if target_list:
                 log.info(f"Found {len(target_list)} {category} sound(s) in {category_dir}")
+
+    def _apply_volume(self, level: int) -> None:
+        card = _parse_card_number(self.aplay_device)
+        if card is None:
+            log.debug("aplay_device '%s' is not hw:/plughw: — skipping amixer", self.aplay_device)
+            return
+        _apply_amixer_volume(card, level)
 
     # ------------------------------------------------------------------
     # Acknowledgment beep

@@ -51,6 +51,8 @@ _PREFERENCE_PATTERNS: list[tuple[re.Pattern, str]] = [
     # Unit system
     (re.compile(r"\b(use|prefer|always)\b.*\b(metric|imperial)\b", re.I), "unit_system"),
     (re.compile(r"\b(use|prefer|always)\b.*\b(kilometers?|miles)\b", re.I), "unit_system"),
+    # Favorite radio station
+    (re.compile(r"\bfavorite\s+radio(?:\s+station)?\b", re.I), "favorite_radio"),
     # Generic "always/never/prefer" — catch-all for unrecognized preferences
     (re.compile(r"^(always|never|prefer)\b", re.I), "_generic_preference"),
 ]
@@ -414,6 +416,15 @@ class MarkdownMemoryStore:
     @staticmethod
     def _preference_to_instruction(key: str, value: str) -> str:
         """Convert a stored preference into an imperative system prompt instruction."""
+        if key == "favorite_radio":
+            m = re.search(r'\bfavorite\s+radio(?:\s+station)?\s+is\s+(.+)', value, re.I)
+            station = m.group(1).strip().rstrip('.') if m else value
+            return (
+                f"User's favorite radio station is '{station}'. "
+                f"When they ask to 'play some radio' without genre or station, "
+                f"call play_radio with query='{station}'"
+            )
+
         if key in _PREFERENCE_INSTRUCTIONS:
             val_lower = value.lower()
             for sub_key, instruction in _PREFERENCE_INSTRUCTIONS[key].items():

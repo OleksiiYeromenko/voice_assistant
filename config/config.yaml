@@ -98,6 +98,7 @@ tts:
   voice: "./voices/en_US-hfc_male-medium.onnx"
   # Streaming: synthesize per-sentence and pipe to aplay
   aplay_device: "plughw:2,0"  # USB audio device
+  volume: 80                  # TTS output volume (0-100); sets ALSA mixer at startup
   sentence_delimiters: ".!?;"
   sounds_dir: "./sounds"      # Pre-recorded WAV sounds; run scripts/generate_sounds.py --all to create
 
@@ -107,7 +108,7 @@ player:
   radio_browser_base: "https://de1.api.radio-browser.info"
   search_limit: 5
   request_timeout_s: 5
-  default_volume: 70         # Music-only starting volume (0-100); TTS is always at full volume
+  default_volume: 70         # Music-only starting volume (0-100)
 
 # --- Session ---
 session:

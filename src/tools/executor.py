@@ -185,14 +185,21 @@ PLAY_RADIO_TOOL = {
     "type": "function",
     "function": {
         "name": "play_radio",
-        "description": "Play an internet radio station by name, genre, or country (e.g. 'jazz', 'BBC Radio 1').",  # noqa: E501
+        "description": (
+            "Play an internet radio station. Pass a genre keyword "
+            "(e.g. 'rock', 'jazz', 'classical'), optionally prefixed with "
+            "'random' for a random pick (e.g. 'random jazz') and/or a country "
+            "(e.g. 'rock Ukraine', 'random pop France'). For a specific station "
+            "pass its name (e.g. 'BBC Radio 1'). When the user says 'play some "
+            "radio' with no genre, use their saved favorite station name."
+        ),
         "parameters": {
             "type": "object",
             "required": ["query"],
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Station name, genre, or descriptive query",
+                    "description": "Genre keyword optionally with 'random' and/or country (e.g. 'random rock Ukraine'). For a specific station use its name.",  # noqa: E501
                 },
             },
         },

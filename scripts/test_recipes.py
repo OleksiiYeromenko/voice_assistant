@@ -34,7 +34,7 @@ ok = True
 
 # ── Test 1: Direct Notion API call ───────────────────────────────────────────
 print(f"[1/3] Direct get_recipe({name!r})")
-result1 = get_recipe(name=name)
+result1 = get_recipe(recipe_name=name)
 print(result1)
 if result1.startswith("ERROR:"):
     print("FAIL — API error")
@@ -44,7 +44,7 @@ else:
 
 # ── Test 2: execute_tool() dispatch ──────────────────────────────────────────
 print(f"[2/3] execute_tool('get_recipe', {{'name': {name!r}}})")
-result2 = execute_tool("get_recipe", {"name": name})
+result2 = execute_tool("get_recipe", {"recipe_name": name})
 if result2 != result1:
     print(
         f"FAIL — dispatch result differs from direct call"
@@ -57,7 +57,7 @@ else:
 
 # ── Test 3: Missing recipe → expect "not found" ───────────────────────────────
 print("[3/3] Missing recipe → expect 'not found' message")
-missing = execute_tool("get_recipe", {"name": "xxxxnosuchrecipexxxx"})
+missing = execute_tool("get_recipe", {"recipe_name": "xxxxnosuchrecipexxxx"})
 if "not found" in missing.lower() or "ERROR" in missing:
     print(f"OK — got: {missing}")
 else:

@@ -478,6 +478,7 @@ def assistant_loop(cfg: dict):
         voice=cfg["tts"]["voice"],
         aplay_device=cfg["tts"]["aplay_device"],
         sounds_dir=cfg["tts"].get("sounds_dir", "./sounds"),
+        volume=int(cfg["tts"].get("volume", 80)),
     )
 
     register_alert_callback(tts.speak)
