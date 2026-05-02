@@ -45,11 +45,5 @@ class UIEventBus(QObject):
     # Radio playback changed: station name when playing, "" when stopped
     radio_changed = pyqtSignal(str)
 
-    # Recipe step display: step_text, step_num, total_steps
-    # step_num == 0 → step_text contains all steps (recipe has ≤ 5 steps total)
-    # step_num > 0  → step_text is the current single step
-    # step_text == "" → clear recipe display, return to clock
-    recipe_step = pyqtSignal(str, int, int)
-
     # FSM has exited — time to close the window
     shutdown_requested = pyqtSignal()

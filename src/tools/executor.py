@@ -10,16 +10,7 @@ import logging
 from typing import Any
 
 from src.tools.player import play_radio, set_volume, stop_playback
-from src.tools.recipes import (
-    ADD_RECIPE_TO_NOTION_TOOL,
-    FETCH_RECIPE_FROM_WEB_TOOL,
-    GET_RECIPE_TOOL,
-    SEARCH_RECIPES_TOOL,
-    add_recipe_to_notion,
-    fetch_recipe_from_web,
-    get_recipe,
-    search_recipes,
-)
+from src.tools.recipes import GET_RECIPE_TOOL, get_recipe
 from src.tools.timers import cancel_timer, set_timer
 
 log = logging.getLogger(__name__)
@@ -250,10 +241,7 @@ ALL_TOOLS = [
     PLAY_RADIO_TOOL,
     STOP_PLAYBACK_TOOL,
     SET_VOLUME_TOOL,
-    SEARCH_RECIPES_TOOL,
     GET_RECIPE_TOOL,
-    FETCH_RECIPE_FROM_WEB_TOOL,
-    ADD_RECIPE_TO_NOTION_TOOL,
 ]
 
 # Tools whose results go stale immediately (e.g., time changes every minute).
@@ -539,10 +527,7 @@ _TOOL_FUNCTIONS: dict[str, callable] = {
     "play_radio": play_radio,
     "stop_radio": stop_playback,
     "set_volume": set_volume,
-    "search_recipes": search_recipes,
     "get_recipe": get_recipe,
-    "fetch_recipe_from_web": fetch_recipe_from_web,
-    "add_recipe_to_notion": add_recipe_to_notion,
 }
 
 

@@ -39,9 +39,6 @@ _HEADER_H = 44    # was 40 hardcoded
 _BOTTOM_H = 36    # was 32 hardcoded
 _BOX_W = 600      # was 480 hardcoded
 
-_RECIPE_FONT_PX = 22
-_RECIPE_NUM_FONT_PX = 14
-
 
 def _ss(color: str, size: int, spacing: int = 1, bold: bool = False) -> str:
     """Build a stylesheet string for retro text labels."""
@@ -246,7 +243,7 @@ class BackendRow(QWidget):
 class RetroIdleScreen(QWidget):
     """Retro idle screen. Public interface matches IdleScreen:
       update_resources(), on_radio_changed(), on_state_changed(),
-      on_recipe_step(), on_model_changed()
+      on_model_changed()
     """
 
     def __init__(self, cfg: dict | None = None, parent=None):
@@ -445,27 +442,6 @@ class RetroIdleScreen(QWidget):
         cp_lay.addWidget(box_wrapper, 0, Qt.AlignmentFlag.AlignHCenter)
         cp_lay.addStretch(1)
         self._center.addWidget(clock_panel)
-
-        # Page 1: recipe step
-        recipe_panel = QWidget()
-        recipe_panel.setStyleSheet(f"background-color: {T.RETRO_BG};")
-        rp_lay = QVBoxLayout(recipe_panel)
-        rp_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rp_lay.setSpacing(8)
-        rp_lay.setContentsMargins(24, 16, 24, 16)
-
-        self._step_num_lbl = QLabel()
-        self._step_num_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._step_num_lbl.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _RECIPE_NUM_FONT_PX, 2))
-
-        self._step_lbl = QLabel()
-        self._step_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._step_lbl.setWordWrap(True)
-        self._step_lbl.setStyleSheet(_ss(T.RETRO_TEXT_PRIMARY, _RECIPE_FONT_PX, 1))
-
-        rp_lay.addWidget(self._step_num_lbl)
-        rp_lay.addWidget(self._step_lbl)
-        self._center.addWidget(recipe_panel)
         self._center.setCurrentIndex(0)
 
         # ── Bottom bar (h:36) ────────────────────────────────────────────────
@@ -591,18 +567,6 @@ class RetroIdleScreen(QWidget):
     def on_model_changed(self, backend_key: str, _model_name: str):
         self._active_backend = backend_key
         self._monitor.set_active(backend_key)
-
-    def on_recipe_step(self, step_text: str, step_num: int, total_steps: int):
-        if not step_text:
-            self._center.setCurrentIndex(0)
-            return
-        if step_num > 0:
-            self._step_num_lbl.setText(f"STEP {step_num} OF {total_steps}:")
-            self._step_num_lbl.setVisible(True)
-        else:
-            self._step_num_lbl.setVisible(False)
-        self._step_lbl.setText(step_text)
-        self._center.setCurrentIndex(1)
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
