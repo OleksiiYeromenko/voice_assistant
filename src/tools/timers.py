@@ -58,10 +58,3 @@ def cancel_timer(label: str = "timer") -> str:
         t.cancel()
         return f"Timer '{label}' cancelled."
     return f"No active timer named '{label}'."
-
-
-def list_timers() -> str:
-    """Return a string listing all active timer labels."""
-    if not _active_timers:
-        return "No active timers."
-    return "Active timers: " + ", ".join(_active_timers.keys()) + "."

@@ -30,14 +30,9 @@ The assistant runs as a finite state machine with explicit states and transition
          │                       ┌──────────┐  ┌───────────┐
          │       no speech       │ THINKING │←─│ LISTENING  │
          │       ┌───────────────│          │  └───────────┘
-         │       │               └──┬────┬──┘      ↑
-         │       │          done    │    │ wake     │
-         └───────┘       ┌─────────┘    │ word     │
-                         │              ↓          │
-                         │       ┌─────────────┐   │
-                         │       │ INTERRUPTED  │──┘
-                         │       └─────────────┘
-                         └→ IDLE
+         └───────┘               └──────────┘
+                                      │ done
+                                      └→ IDLE
 ```
 
 | State | What happens | Mic owner |
@@ -45,8 +40,7 @@ The assistant runs as a finite state machine with explicit states and transition
 | IDLE | Wait for trigger (wake word / Enter / text) | Wake detector (wake mode) |
 | SESSION_CHECK | Check inactivity timeout, rotate session | None |
 | LISTENING | STT: record + transcribe | STT (arecord) |
-| THINKING | Route → LLM + tool loop + streaming TTS | Interrupt listener (wake mode) |
-| INTERRUPTED | TTS stopped, clean up | Releasing → free |
+| THINKING | Route → LLM + tool loop (max 2 rounds) + streaming TTS | None |
 | SHUTDOWN | Close session, exit | None |
 
 ## Prerequisites
@@ -57,11 +51,12 @@ The assistant runs as a finite state machine with explicit states and transition
   ```bash
   sudo apt-get install alsa-utils espeak-ng mpv
   ```
-- **Ollama** (local inference) or API keys for cloud models:
-  - **Local**: [Ollama](https://ollama.ai) running on localhost:11434 or remote GPU PC
-  - **Claude**: Set `ANTHROPIC_API_KEY` environment variable
-  - **Gemini**: Set `GOOGLE_API_KEY` environment variable
-  - **Todoist** (optional): Set `TODOIST_API_TOKEN` for shopping list tool
+- **LLM backends** (at least one required):
+  - **Remote**: [Ollama](https://ollama.ai) on a GPU PC at `192.168.1.74:11434`
+  - **Local**: [llama.cpp](https://github.com/ggerganov/llama.cpp) server on the RPi at `localhost:8080`
+  - **Claude**: Set `ANTHROPIC_API_KEY` in `.env`
+  - **Gemini**: Set `GOOGLE_API_KEY` in `.env`
+- **Optional**: `TODOIST_API_TOKEN` + `TODOIST_PROJECT_ID` for shopping list; `NOTION_API_KEY` + `NOTION_RECIPES_DB_ID` for recipe lookup
 
 ## Installation
 
@@ -142,67 +137,64 @@ To contribute or modify the code:
 
 The assistant routes to the right model automatically:
 
-| Trigger | Model | Example |
+| Trigger | Backend | Notes |
 |---|---|---|
-| (default) | Local (qwen3:4b) | "What time is it?" |
-| "Use Claude..." | Claude Sonnet | "Use Claude to analyze this code" |
-| "Ask Gemini..." | Gemini Flash | "Ask Gemini about quantum physics" |
-| "Switch to Claude" | Claude (sticky) | Sets session preference |
-| "Go back to automatic" | Local | Resets to auto-routing |
+| (default, GPU PC reachable) | Remote Ollama (GPU PC) | Fastest |
+| (default, GPU PC down) | Local llama.cpp (RPi) | Always available |
+| "Use Claude / ask Claude" | Claude | Sticky for session |
+| "Use Gemini / ask Gemini" | Gemini | Sticky for session |
+| "Use GPU / use remote" | Remote Ollama | Sticky for session |
+| "Use local / go offline" | Local llama.cpp | Sticky for session |
+| "Go back to automatic" | Auto | Clears session preference |
 
 Cloud → local fallback happens automatically on network failure.
 
 ## Tools
 
-| Tool | Status | Provider |
-|---|---|---|
-| Weather | ✅ Working | Open-Meteo (free) |
-| Web Search | ✅ Working | DuckDuckGo |
-| Shopping List | ✅ Working | Todoist API |
-| Google Keep | 🔲 Planned | gkeepapi |
-| Smart Home | 🔲 Planned | n8n webhooks |
+| Tool | Provider |
+|---|---|
+| Weather (current + forecast) | Open-Meteo (free, no key) |
+| Web search | DuckDuckGo (free, no key) |
+| Time / date (any timezone) | System + geocoding |
+| Shopping list (add + view) | Todoist API |
+| Timers (set + cancel) | Background thread |
+| Internet radio (play + stop + volume) | Radio Browser API + mpv |
+| Recipe lookup | Notion family recipe DB |
+| Remember / recall | Markdown files + SQLite |
 
 ## Project Structure
 
 ```
 voice-assistant/
-├── config/config.yaml       # All configuration
+├── config/config.yaml         # All configuration
+├── memory/
+│   ├── PERSONA.md             # Assistant identity + tool instructions (edit freely)
+│   └── USER.md                # User preferences + facts (written by remember tool)
 ├── src/
-│   ├── main.py              # Entry point + LLM streaming functions
-│   ├── state_machine.py     # FSM: states, transitions, orchestration
-│   ├── config.py            # Config loader
-│   ├── monitor.py           # CPU/RAM/temp tracking
-│   ├── wake_word/detector.py
-│   ├── stt/engine.py        # faster-whisper
-│   ├── llm/backends.py      # Ollama, Claude, Gemini
-│   ├── router/router.py     # Model selection
-│   ├── tools/executor.py    # Tool definitions + execution
-│   └── tts/engine.py        # Piper streaming TTS
+│   ├── main.py                # Entry point + run_llm_with_tools
+│   ├── state_machine.py       # FSM: states, transitions, orchestration
+│   ├── config.py              # Config loader (YAML + VA_ env overrides)
+│   ├── audio.py               # ALSA device detection + arecord streaming
+│   ├── monitor.py             # CPU/RAM/temp tracking + latency records
+│   ├── wake_word/detector.py  # openWakeWord integration
+│   ├── stt/engine.py          # faster-whisper STT
+│   ├── llm/backends.py        # OllamaBackend, LlamaCppBackend, ClaudeBackend, GeminiBackend
+│   ├── router/router.py       # Model selection + remote availability monitor
+│   ├── tools/
+│   │   ├── executor.py        # Tool schemas + dispatch
+│   │   ├── player.py          # Internet radio via mpv
+│   │   ├── recipes.py         # Notion recipe library
+│   │   └── timers.py          # Countdown timers
+│   ├── tts/engine.py          # Piper streaming TTS
+│   └── ui/                    # PyQt6 display (--ui flag)
 ├── scripts/
-│   ├── setup.sh             # One-time setup
-│   └── test_components.py   # Component tests
-├── voices/                  # Piper voice models
-├── data/                    # Shopping list, etc.
+│   ├── setup.sh               # One-time setup
+│   └── test_components.py     # Component tests
+├── voices/                    # Piper voice models (.onnx)
+├── models/                    # Wake word models (.onnx)
 └── pyproject.toml
 ```
 
-## Phases
-
-### Phase 1 ✅ — Core Loop
-Wake word → STT → Local LLM → Streaming TTS. Basic tool calling (weather, search, shopping list).
-
-### Phase 2 — Cloud + Polish
-- Claude/Gemini backends with fallback
-- Google Keep integration
-- Conversation persistence (SQLite)
-- Resource usage dashboard
-
-### Phase 3 — Display + Advanced
-- PyQt6 screen UI with model badges
-- Streaming text display
-- n8n webhook integration
-- Custom wake word training
-- Benchmark test suite for model comparison
 
 ## Configuration
 

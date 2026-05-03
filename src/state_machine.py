@@ -210,8 +210,8 @@ class AssistantFSM:
     # ------------------------------------------------------------------
     def _state_thinking(self, ctx: dict) -> tuple[State, dict]:
         """Route, run LLM with tools, stream TTS."""
-        from src.llm.backends import ClaudeBackend, GeminiBackend, LlamaCppBackend, OllamaBackend
-        from src.main import run_llm_with_tools, run_streaming_llm
+        from src.llm.backends import LlamaCppBackend, OllamaBackend
+        from src.main import run_llm_with_tools
         from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
         from src.tools.executor import ALL_TOOLS, VOLATILE_TOOLS
 
@@ -260,33 +260,20 @@ class AssistantFSM:
         tools_used: set[str] = set()
         tool_delta: list[dict] = []
         try:
-            if isinstance(backend, (OllamaBackend, LlamaCppBackend, GeminiBackend, ClaudeBackend)):
-                response, tools_used, tool_delta = run_llm_with_tools(
-                    backend,
-                    list(recent),
-                    ALL_TOOLS,
-                    system_prompt,
-                    self.tts,
-                    latency,
-                    thinking_proc=thinking_proc,
-                    ui_bus=self.ui_bus,
-                )
-            else:
-                response, tools_used, tool_delta = run_streaming_llm(
-                    backend,
-                    list(recent),
-                    ALL_TOOLS,
-                    system_prompt,
-                    self.tts,
-                    latency,
-                    thinking_proc=thinking_proc,
-                    ui_bus=self.ui_bus,
-                )
+            response, tools_used, tool_delta = run_llm_with_tools(
+                backend,
+                list(recent),
+                ALL_TOOLS,
+                system_prompt,
+                self.tts,
+                latency,
+                thinking_proc=thinking_proc,
+                ui_bus=self.ui_bus,
+            )
         except Exception as e:
             log.error(f"LLM failed: {e}")
             fallback = self.router.get_fallback(decision.backend_key)
             if fallback:
-                # Find the key for the fallback backend so we can update the UI badge
                 fallback_key = next(
                     (k for k, v in self.router.backends.items() if v is fallback),
                     "local",
@@ -295,29 +282,16 @@ class AssistantFSM:
                 if self.ui_bus is not None:
                     self.ui_bus.model_changed.emit(fallback_key, fallback.name)
                 try:
-                    _local_backends = (OllamaBackend, LlamaCppBackend, GeminiBackend, ClaudeBackend)
-                    if isinstance(fallback, _local_backends):
-                        response, tools_used, tool_delta = run_llm_with_tools(
-                            fallback,
-                            list(recent),
-                            ALL_TOOLS,
-                            system_prompt,
-                            self.tts,
-                            latency,
-                            thinking_proc=thinking_proc,
-                            ui_bus=self.ui_bus,
-                        )
-                    else:
-                        response, tools_used, tool_delta = run_streaming_llm(
-                            fallback,
-                            list(recent),
-                            ALL_TOOLS,
-                            system_prompt,
-                            self.tts,
-                            latency,
-                            thinking_proc=thinking_proc,
-                            ui_bus=self.ui_bus,
-                        )
+                    response, tools_used, tool_delta = run_llm_with_tools(
+                        fallback,
+                        list(recent),
+                        ALL_TOOLS,
+                        system_prompt,
+                        self.tts,
+                        latency,
+                        thinking_proc=thinking_proc,
+                        ui_bus=self.ui_bus,
+                    )
                 except Exception:
                     response = "Sorry, I'm having trouble right now."
                     self.tts.speak(response)

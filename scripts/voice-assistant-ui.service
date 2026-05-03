@@ -3,9 +3,8 @@
 # Runs with wake word + 800x480 touch display.
 # Requires a graphical session (X11 auto-login on RPi).
 #
-# Install:  sudo cp scripts/voice-assistant-ui.service /etc/systemd/system/
-#           sudo systemctl daemon-reload
-#           sudo systemctl enable --now voice-assistant-ui
+# Install:  va install --ui       (auto-detects project dir and user)
+#       OR  manually: edit @@…@@ placeholders, then cp to /etc/systemd/system/
 #
 # Logs:     journalctl -u voice-assistant-ui -f
 # Status:   systemctl status voice-assistant-ui
@@ -15,34 +14,34 @@
 
 [Unit]
 Description=Voice Assistant UI (Poondyk)
-Documentation=file:///home/pi/Projects/voice_assistant/README.md
+Documentation=file://@@PROJECT_DIR@@/README.md
 After=network-online.target sound.target ollama.service graphical.target
 Wants=network-online.target ollama.service
 Requires=graphical.target
 
 [Service]
 Type=simple
-User=pi
-Group=pi
+User=@@USER@@
+Group=@@USER@@
 
-WorkingDirectory=/home/pi/Projects/voice_assistant
+WorkingDirectory=@@PROJECT_DIR@@
 
-ExecStart=/home/pi/.local/bin/uv run python -m src.main --ui
+ExecStart=@@UV@@ run python -m src.main --ui
 
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
 
 # X11 display — required for PyQt6
-Environment="HOME=/home/pi"
+Environment="HOME=@@HOME@@"
 Environment="DISPLAY=:0"
 Environment="QT_QPA_PLATFORM=xcb"
-Environment="PATH=/home/pi/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="PATH=@@HOME@@/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="XDG_RUNTIME_DIR=/run/user/@@UID@@"
 
 # Cloud API keys
-EnvironmentFile=-/home/pi/Projects/voice_assistant/.env
-EnvironmentFile=-/home/pi/Projects/voice_assistant/.env.local
+EnvironmentFile=-@@PROJECT_DIR@@/.env
+EnvironmentFile=-@@PROJECT_DIR@@/.env.local
 
 # Resource limits
 MemoryMax=8G
@@ -51,10 +50,10 @@ CPUQuota=300%
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/home/pi/Projects/voice_assistant/data
-ReadWritePaths=/home/pi/Projects/voice_assistant/memory
-ReadWritePaths=/home/pi/Projects/voice_assistant/tts_output
-ReadWritePaths=/home/pi/Projects/voice_assistant/stt_output
+ReadWritePaths=@@PROJECT_DIR@@/data
+ReadWritePaths=@@PROJECT_DIR@@/memory
+ReadWritePaths=@@PROJECT_DIR@@/tts_output
+ReadWritePaths=@@PROJECT_DIR@@/stt_output
 ProtectHome=no
 PrivateTmp=yes
 

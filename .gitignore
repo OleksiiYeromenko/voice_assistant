@@ -24,5 +24,23 @@ data/
 .env
 .env.local
 
+# Runtime user memory (personal data — do not commit)
+memory/USER.md
+
+# Custom wake word models (personal — train your own with openWakeWord)
+models/*.onnx
+
+# Large voice model binaries (download from https://github.com/rhasspy/piper/releases)
+voices/*.onnx
+voices/*.onnx.json
+
 # OS
 .DS_Store
+
+# Hardware-specific benchmark results
+bench_results.json
+
+# BMAD tooling artifacts
+skills-lock.json
+_bmad/
+_bmad-output/

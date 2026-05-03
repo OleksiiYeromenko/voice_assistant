@@ -67,7 +67,7 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
     backends = {}
     llm_cfg = cfg["llm"]
     remote_url = llm_cfg.get("remote_base_url", "http://192.168.1.74:11434")
-    local_url = llm_cfg.get("local_base_url", "http://localhost:11434")
+    local_url = llm_cfg.get("local_base_url", "http://localhost:8080")
     model_cfg = llm_cfg["local"]
     preferred_remote_model = llm_cfg.get("remote_model", model_cfg["model"])
 
@@ -357,51 +357,6 @@ def run_llm_with_tools(
         messages.append({"role": "assistant", "content": full_response})
     return full_response, tools_used, messages[initial_len:]
 
-
-def run_streaming_llm(
-    backend,
-    messages: list[dict],
-    tools: list[dict],
-    system: str,
-    tts: TTSEngine,
-    latency: LatencyRecord,
-    thinking_proc=None,
-    ui_bus=None,
-) -> tuple[str, set[str], list[dict]]:
-    """Stream LLM → TTS sentence-by-sentence with tool support for cloud models.
-
-    Returns (response_text, tools_used, delta_messages) for consistency with
-    run_llm_with_tools. Cloud path currently doesn't loop tool calls, so
-    tools_used is always empty and delta_messages contains only the final response.
-    ui_bus is optional; when provided, streaming tokens are emitted to the UI.
-    """
-    full_text = ""
-
-    token_gen = _create_token_gen(
-        backend,
-        messages,
-        tools,
-        system,
-        latency,
-        tool_calls_list=None,
-        ui_bus=ui_bus,
-        is_first_round=True,
-    )
-
-    speaking_emitted = False
-    for text in tts.stream_speak(token_gen(), latency=latency, pre_proc=thinking_proc):
-        if not speaking_emitted and text.strip() and ui_bus is not None:
-            ui_bus.state_changed.emit("SPEAKING")
-            speaking_emitted = True
-        full_text += text
-        print(text, end="", flush=True)
-
-    print()  # Newline after streaming
-    if ui_bus is not None:
-        ui_bus.response_complete.emit()
-    response = full_text.strip()
-    delta = [{"role": "assistant", "content": response}] if response else []
-    return response, set(), delta
 
 
 # ---------------------------------------------------------------------------

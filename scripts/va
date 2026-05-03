@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-PROJECT_DIR="/home/pi/Projects/voice_assistant"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_DIR="/etc/systemd/system"
 HEADLESS_SERVICE="voice-assistant.service"
 UI_SERVICE="voice-assistant-ui.service"
@@ -46,8 +46,13 @@ case "${1:-help}" in
             sudo systemctl disable --now "$OTHER"
         fi
 
-        echo "→ Installing $SVC"
-        sudo cp "$SRC" "$SERVICE_DIR/$SVC"
+        _user="$(whoami)"
+        _home="$HOME"
+        _uid="$(id -u)"
+        _uv="$(command -v uv 2>/dev/null || echo uv)"
+        echo "→ Installing $SVC (dir: $PROJECT_DIR, user: $_user)"
+        sed "s|@@PROJECT_DIR@@|$PROJECT_DIR|g; s|@@USER@@|$_user|g; s|@@HOME@@|$_home|g; s|@@UID@@|$_uid|g; s|@@UV@@|$_uv|g" "$SRC" \
+            | sudo tee "$SERVICE_DIR/$SVC" > /dev/null
         sudo systemctl daemon-reload
         sudo systemctl enable "$SVC"
 

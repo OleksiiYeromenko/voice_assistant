@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Local-first voice assistant for Raspberry Pi 5 (16GB). Processes audio through a pipeline: wake word → STT → LLM → tool calling → streaming TTS. Supports local inference (Ollama) with optional cloud fallback (Claude, Gemini).
+Local-first voice assistant for Raspberry Pi 5 (16GB). Processes audio through a pipeline: wake word → STT → LLM → tool calling → streaming TTS. Supports local inference (llama.cpp on RPi, Ollama on remote GPU) with optional cloud fallback (Claude, Gemini).
 
 **Stack:** Python 3.13, `uv` package manager, `hatchling` build backend.
 
@@ -49,30 +49,30 @@ bash scripts/setup.sh
 
 ### State Machine (`src/state_machine.py`)
 
-The assistant is orchestrated by a FSM with 6 states:
+The assistant is orchestrated by a FSM with 5 states:
 
 ```
-IDLE → SESSION_CHECK → LISTENING → THINKING → (INTERRUPTED) → IDLE
+IDLE → SESSION_CHECK → LISTENING → THINKING → IDLE
 ```
 
 - **IDLE**: Wait for trigger (wake word, keypress, or text)
 - **SESSION_CHECK**: Check inactivity timeout; rotate sessions with background summarization
 - **LISTENING**: Record mic via `arecord`, transcribe with faster-whisper
-- **THINKING**: Route to LLM, tool calling loop (max 3 rounds), stream TTS response
-- **INTERRUPTED**: Wake word detected during TTS playback → cancel and re-listen
+- **THINKING**: Route to LLM, tool calling loop (max 2 rounds), stream TTS response
 - **SHUTDOWN**: Clean exit
 
-`src/main.py` contains the LLM streaming loop and TTS orchestration called from THINKING state.
+`src/main.py` contains the LLM streaming loop (`run_llm_with_tools`) and TTS orchestration called from THINKING state.
 
 ### LLM Backends (`src/llm/backends.py`)
 
-Three backends selected at runtime by `src/router/router.py`:
+Four backends selected at runtime by `src/router/router.py`:
 
-- **OllamaBackend** (default): Tries remote GPU at `192.168.1.74:11434`, falls back to `localhost:11434`
+- **OllamaBackend** (`remote`): GPU PC at `192.168.1.74:11434` — preferred default when reachable
+- **LlamaCppBackend** (`local`): RPi llama.cpp server at `localhost:8080` — always-available fallback
 - **ClaudeBackend**: Requires `ANTHROPIC_API_KEY`
 - **GeminiBackend**: Requires `GOOGLE_API_KEY`
 
-Router priority: explicit user trigger ("use claude") → session preference → automatic (remote if reachable) → fallback chain.
+Router priority: explicit user trigger ("use claude") → session preference → automatic (remote if reachable, else local) → fallback chain.
 
 ### Streaming TTS (`src/tts/engine.py`)
 
@@ -80,11 +80,11 @@ Buffers LLM tokens until a sentence boundary, then synthesizes via Piper and pip
 
 ### Tool Calling (`src/tools/executor.py`)
 
-Available tools: `get_weather`, `web_search`, `get_time`, `add_to_shopping_list`, `remember`, `recall`. The loop in `src/main.py` retries up to 3 rounds before returning the final response.
+Available tools: `get_weather`, `web_search`, `get_time`, `add_to_shopping_list`, `get_shopping_list`, `remember`, `recall`, `set_timer`, `cancel_timer`, `play_radio`, `stop_radio`, `set_volume`, `get_recipe`. The loop in `src/main.py` retries up to 2 rounds before returning the final response.
 
 ### Memory (`src/memory.py`)
 
-- **Markdown files** (git-tracked, human-editable): `memory/PERSONA.md` (system prompt), `memory/PROFILE.md` (user prefs), `memory/FACTS.md` (appended facts)
+- **Markdown files** (git-tracked, human-editable): `memory/PERSONA.md` (system prompt, read-only at runtime), `memory/USER.md` (user preferences + dated facts, written by `remember` tool)
 - **SQLite** (`data/memory.db`): Session summaries only; auto-rotated on inactivity timeout with background LLM summarization
 
 ## Configuration
@@ -95,11 +95,12 @@ API keys go in `.env` (gitignored): `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`.
 
 Key config values:
 - STT model: `base.en` (options: `tiny.en`, `small.en`)
-- LLM model: `qwen3:4b-instruct`, `num_predict: 384` (keep low for RPi latency)
+- LLM remote: Ollama on GPU PC (`192.168.1.74:11434`), model `gemma4:e4b`
+- LLM local: llama.cpp server on RPi (`localhost:8080`), model `gemma4-e2b-q4km`, `num_predict: 150`
 - TTS voice: `./voices/en_US-hfc_male-medium.onnx`
-- Wake word: `./models/hey_Poon-dyk.onnx`, threshold `0.5`
+- Wake word: `./models/hey_Poon-dyk_acc_0.83_recall_0.67_fp_4.6.onnx`, threshold `0.4`
 - Audio output: `aplay_device: "plughw:2,0"` (USB audio)
 
 ## Hardware Notes
 
-Target: RPi 5 (16GB). The `num_thread: 4` Ollama setting is tuned for RPi 5's CPU. The remote Ollama server (`192.168.1.74:11434`) is a GPU PC on the LAN — if unreachable, the assistant falls back to the local Ollama instance automatically. `src/monitor.py` tracks CPU/RAM/temperature.
+Target: RPi 5 (16GB). The remote Ollama server (`192.168.1.74:11434`) is a GPU PC on the LAN — if unreachable, the assistant falls back to the local llama.cpp instance automatically. `src/monitor.py` tracks CPU/RAM/temperature.

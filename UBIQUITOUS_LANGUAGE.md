@@ -38,8 +38,8 @@
 | Term | Definition | Aliases to avoid |
 | --- | --- | --- |
 | **Persona** | The assistant's identity, behavioral rules, and tool instructions; loaded from `memory/PERSONA.md` and never changed at runtime | System prompt (which is assembled from multiple sources) |
-| **Profile** | User preferences stored as key-value pairs in `memory/PROFILE.md`; written by the `remember` tool | Settings, user config |
-| **Fact** | A discrete piece of information about the user, appended with a date to `memory/FACTS.md` | Note, memory item |
+| **Profile** | User preferences stored as key-value pairs in `memory/USER.md` (Preferences section); written by the `remember` tool | Settings, user config |
+| **Fact** | A discrete piece of information about the user, appended with a date to `memory/USER.md` (Facts section) | Note, memory item |
 | **Preference** | A structured behavioral rule extracted from a fact and stored in the Profile (e.g. "use 24-hour time") | Setting, option |
 | **System Prompt** | The full instruction block assembled before each LLM call from persona + profile + known facts | Base prompt, context prompt |
 | **Session Summary** | An LLM-generated one-sentence description of a closed session's conversation, written to SQLite | Summary, recap |
@@ -97,11 +97,11 @@
 
 - A **Session** contains zero or more **Turns**; each turn appends messages to the **Conversation**.
 - A **Session** ends when the inactivity timeout elapses; a **Session Summary** is then generated asynchronously.
-- A **Turn** flows through: **LISTENING** (produces an **Utterance**) → **Route Decision** (selects a **Backend**) → up to 3 **Tool Rounds** → **Speech** (synthesized sentence by sentence).
+- A **Turn** flows through: **LISTENING** (produces an **Utterance**) → **Route Decision** (selects a **Backend**) → up to 2 **Tool Rounds** → **Speech** (synthesized sentence by sentence).
 - A **Tool** has exactly one **Tool Schema** (sent to the LLM) and one Python implementation (executed by the executor).
 - A **Volatile Tool**'s **Turn** is excluded from the **Conversation** so stale values are never replayed.
 - A **Stream** is paused when the **Wake Word** fires and resumed after **Speech** ends.
-- The **Memory Store** assembles the **System Prompt** from **Persona** + **Profile** + recent **Facts** before each LLM call.
+- The **Memory Store** assembles the **System Prompt** from **Persona** + user preferences + recent **Facts** (both from `memory/USER.md`) before each LLM call.
 
 ---
 
