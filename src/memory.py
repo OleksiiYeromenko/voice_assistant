@@ -1,12 +1,9 @@
-"""Persistent memory — markdown files for personality/profile/facts, SQLite for sessions.
+"""Persistent memory — markdown files for personality/user data, SQLite for sessions.
 
-Architecture (CLAUDE.md-inspired):
+Architecture:
   memory/PERSONA.md  — Assistant identity, rules, tool instructions (read-only at runtime)
-  memory/PROFILE.md  — User preferences as key-value pairs (written by remember tool)
-  memory/FACTS.md    — Known facts about the user (appended by remember tool)
+  memory/USER.md     — User preferences + facts (written by remember tool)
   data/memory.db     — Session summaries only (SQLite, WAL mode)
-
-On first run, migrates data from old SQLite preferences/facts tables if present.
 """
 
 from __future__ import annotations
@@ -103,8 +100,7 @@ class MarkdownMemoryStore:
     ):
         self._memory_dir = Path(memory_dir)
         self._persona_path = self._memory_dir / "PERSONA.md"
-        self._profile_path = self._memory_dir / "PROFILE.md"
-        self._facts_path = self._memory_dir / "FACTS.md"
+        self._user_path = self._memory_dir / "USER.md"
 
         # Ensure directories exist
         self._memory_dir.mkdir(parents=True, exist_ok=True)
@@ -137,78 +133,73 @@ class MarkdownMemoryStore:
         self._conn.commit()
 
     # ------------------------------------------------------------------
-    # PROFILE.md — user preferences (key-value)
+    # USER.md — preferences (key: value) + facts (- bullet) in two sections
     # ------------------------------------------------------------------
-    def _read_profile(self) -> dict[str, str]:
-        """Parse PROFILE.md into a dict of key-value pairs."""
-        if not self._profile_path.exists():
-            return {}
+    def _read_section(self, section: str) -> list[str]:
+        """Return raw lines from a named section of USER.md."""
+        if not self._user_path.exists():
+            return []
+        lines = []
+        in_section = False
+        for line in self._user_path.read_text().splitlines():
+            if line.strip() == f"# {section}":
+                in_section = True
+                continue
+            if in_section and line.startswith("# "):
+                break
+            if in_section:
+                lines.append(line)
+        return lines
 
+    def _read_profile(self) -> dict[str, str]:
+        """Parse Preferences section of USER.md into key-value dict."""
         data: dict[str, str] = {}
-        for line in self._profile_path.read_text().splitlines():
+        for line in self._read_section("Preferences"):
             line = line.strip()
-            if line.startswith("- ") and ":" in line:
-                key, _, value = line[2:].partition(":")
+            if line and ":" in line:
+                key, _, value = line.partition(":")
                 data[key.strip()] = value.strip()
         return data
 
-    def _write_profile(self, data: dict[str, str]):
-        """Atomic write of profile data to PROFILE.md."""
-        lines = ["# User Profile\n"]
-        for key, val in data.items():
-            lines.append(f"- {key}: {val}")
-        content = "\n".join(lines) + "\n"
-        self._atomic_write(self._profile_path, content)
-        log.info(f"Updated PROFILE.md ({len(data)} entries)")
+    def _write_user_file(self, preferences: dict[str, str], facts: list[str]):
+        """Atomically rewrite USER.md with updated Preferences and Facts."""
+        pref_lines = "\n".join(f"{k}: {v}" for k, v in preferences.items())
+        fact_lines = "\n".join(f"- {f}" for f in facts)
+        content = f"# Preferences\n{pref_lines}\n\n# Facts\n{fact_lines}\n"
+        self._atomic_write(self._user_path, content)
+        log.info(f"Updated USER.md ({len(preferences)} prefs, {len(facts)} facts)")
 
     def _set_preference(self, key: str, value: str):
-        """Update a single preference in PROFILE.md."""
+        """Update a single preference in USER.md."""
         profile = self._read_profile()
         profile[key] = value
-        self._write_profile(profile)
+        self._write_user_file(profile, self._read_all_facts())
 
-    # ------------------------------------------------------------------
-    # FACTS.md — known facts about the user
-    # ------------------------------------------------------------------
     def _read_all_facts(self) -> list[str]:
-        """Read all fact lines from FACTS.md."""
-        if not self._facts_path.exists():
-            return []
-
+        """Read fact lines from Facts section of USER.md."""
         facts = []
-        for line in self._facts_path.read_text().splitlines():
+        for line in self._read_section("Facts"):
             line = line.strip()
             if line.startswith("- "):
                 facts.append(line[2:])
         return facts
 
     def _read_recent_facts(self, limit: int = MAX_PROMPT_FACTS) -> list[str]:
-        """Read the most recent N facts from FACTS.md."""
-        all_facts = self._read_all_facts()
-        return all_facts[-limit:]
+        """Return the most recent N facts."""
+        return self._read_all_facts()[-limit:]
 
     def _append_fact(self, text: str) -> str:
-        """Append a fact to FACTS.md with today's date."""
+        """Append a dated fact to USER.md Facts section."""
         date = datetime.now().strftime("%Y-%m-%d")
-        line = f"- {text} ({date})\n"
-
-        # Ensure file exists with header
-        if not self._facts_path.exists():
-            self._facts_path.write_text("# Known Facts\n\n")
-
-        with open(self._facts_path, "a") as f:
-            f.write(line)
-
+        new_fact = f"{text} ({date})"
+        profile = self._read_profile()
+        facts = self._read_all_facts()
+        facts.append(new_fact)
+        if len(facts) > MAX_STORED_FACTS:
+            facts = facts[-MAX_STORED_FACTS:]
+            log.info(f"Pruned USER.md facts to {MAX_STORED_FACTS} entries")
+        self._write_user_file(profile, facts)
         log.info(f"Memory: stored fact '{text}'")
-
-        # Prune if over limit
-        all_facts = self._read_all_facts()
-        if len(all_facts) > MAX_STORED_FACTS:
-            pruned = all_facts[-MAX_STORED_FACTS:]
-            content = "# Known Facts\n\n" + "\n".join(f"- {f}" for f in pruned) + "\n"
-            self._atomic_write(self._facts_path, content)
-            log.info(f"Pruned FACTS.md to {MAX_STORED_FACTS} entries")
-
         return f"I'll remember that: {text}"
 
     # ------------------------------------------------------------------
@@ -389,7 +380,7 @@ class MarkdownMemoryStore:
         parts = [self._persona]
 
         if model_info:
-            parts.append(f"\n## Current Model\n{model_info}")
+            parts.append(f"\n<current_model>\n{model_info}\n</current_model>")
 
         # User profile as imperative instructions
         profile = self._read_profile()
@@ -403,19 +394,22 @@ class MarkdownMemoryStore:
                 instruction = self._preference_to_instruction(key, val)
                 user_lines.append(f"- {instruction}")
         if user_lines:
-            parts.append("\n## User\n" + "\n".join(user_lines))
+            parts.append("\n<user_profile>\n" + "\n".join(user_lines) + "\n</user_profile>")
 
         # Known facts (last N)
         facts = self._read_recent_facts()
         if facts:
             fact_lines = "\n".join(f"- {f}" for f in facts)
-            parts.append(f"\n## Known Facts\n{fact_lines}")
+            parts.append(f"\n<known_facts>\n{fact_lines}\n</known_facts>")
 
         return "\n".join(parts)
 
     @staticmethod
     def _preference_to_instruction(key: str, value: str) -> str:
         """Convert a stored preference into an imperative system prompt instruction."""
+        if key == "location":
+            return f"User's location is {value}"
+
         if key == "favorite_radio":
             m = re.search(r'\bfavorite\s+radio(?:\s+station)?\s+is\s+(.+)', value, re.I)
             station = m.group(1).strip().rstrip('.') if m else value
