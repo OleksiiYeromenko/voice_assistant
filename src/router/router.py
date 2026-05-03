@@ -74,6 +74,7 @@ class ModelRouter:
         self.default_backend_key = default_backend_key
         self.session_preference: str | None = None  # Sticky preference
         self._monitor = monitor
+        self.unavailable_keys: set[str] = set()  # Backends excluded from auto-routing
 
     def route(self, text: str) -> RouteDecision:
         """Decide which backend to use for this text."""
@@ -126,9 +127,17 @@ class ModelRouter:
                 log.info(f"Remote availability changed → default is now {new_default}")
                 self.default_backend_key = new_default
 
+        chosen = self.default_backend_key
+        if chosen in self.unavailable_keys:
+            fallback = next(
+                (k for k in self.backends if k not in self.unavailable_keys), chosen
+            )
+            log.warning(f"Default backend '{chosen}' is unavailable → using '{fallback}'")
+            chosen = fallback
+
         return RouteDecision(
-            backend_key=self.default_backend_key,
-            reason=f"default → {self.default_backend_key}",
+            backend_key=chosen,
+            reason=f"default → {chosen}",
             cleaned_text=text,
         )
 

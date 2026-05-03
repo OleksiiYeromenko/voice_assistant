@@ -91,6 +91,33 @@ def check_llama_cpp_connectivity(base_url: str, timeout: float = 3.0) -> bool:
         return False
 
 
+def check_claude_availability(api_key: str, timeout: float = 3.0) -> tuple[bool, str]:
+    """Returns (available, reason). GET /v1/models — zero token cost."""
+    try:
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/models",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+        )
+        urllib.request.urlopen(req, timeout=timeout)
+        return True, "ok"
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code}"
+    except Exception as e:
+        return False, str(e)
+
+
+def check_gemini_availability(api_key: str, timeout: float = 3.0) -> tuple[bool, str]:
+    """Returns (available, reason). GET /v1beta/models — zero token cost."""
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        urllib.request.urlopen(url, timeout=timeout)
+        return True, "ok"
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code}"
+    except Exception as e:
+        return False, str(e)
+
+
 # ---------------------------------------------------------------------------
 # Ollama (local)
 # ---------------------------------------------------------------------------

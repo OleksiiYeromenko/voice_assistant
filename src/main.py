@@ -6,6 +6,7 @@ called by the FSM state handlers.
 """
 
 import logging
+import os
 import sys
 import time
 from logging.handlers import RotatingFileHandler
@@ -18,6 +19,8 @@ from src.llm.backends import (
     LlamaCppBackend,
     OllamaBackend,
     ToolCall,
+    check_claude_availability,
+    check_gemini_availability,
     check_ollama_connectivity,
     get_running_remote_model,
 )
@@ -538,6 +541,25 @@ def assistant_loop(cfg: dict):
         default_backend_key=default_key,
         monitor=monitor,
     )
+
+    # Cloud backend availability checks (zero-cost list-models calls).
+    # Unreachable or auth-failed backends are excluded from auto-routing;
+    # explicit user triggers ("use claude") still bypass this and try anyway.
+    if "claude" in backends:
+        available, reason = check_claude_availability(os.environ.get("ANTHROPIC_API_KEY", ""))
+        if not available:
+            log.warning("Claude unavailable at startup (%s) — excluded from auto-routing", reason)
+            router.unavailable_keys.add("claude")
+        else:
+            log.info("Claude availability check: ok")
+
+    if "gemini" in backends:
+        available, reason = check_gemini_availability(os.environ.get("GOOGLE_API_KEY", ""))
+        if not available:
+            log.warning("Gemini unavailable at startup (%s) — excluded from auto-routing", reason)
+            router.unavailable_keys.add("gemini")
+        else:
+            log.info("Gemini availability check: ok")
 
     # Persistent memory (.md files for profile/facts, SQLite for sessions)
     memory = MarkdownMemoryStore()
