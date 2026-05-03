@@ -190,14 +190,19 @@ def run_llm_with_tools(
     latency: LatencyRecord,
     thinking_proc=None,
     ui_bus=None,
-) -> tuple[str, set[str]]:
+) -> tuple[str, set[str], list[dict]]:
     """Run LLM with tool calling and per-sentence streaming TTS.
 
-    Returns (response_text, tools_used) so callers can detect volatile tool usage.
+    Returns (response_text, tools_used, delta_messages) where delta_messages are
+    the messages appended during this call (tool calls, results, final response).
+    Callers extend conversation history with delta_messages so the model sees the
+    full tool-call pattern on the next turn — preventing the 2B model from copying
+    a canned action-tool response instead of calling the tool.
     ui_bus is optional; when provided, streaming tokens and tool events are emitted.
     """
     full_response = ""
     tools_used: set[str] = set()
+    initial_len = len(messages)
 
     for round_num in range(MAX_TOOL_ROUNDS):
         tool_calls: list[ToolCall] = []
@@ -301,7 +306,8 @@ def run_llm_with_tools(
                     if ui_bus is not None:
                         ui_bus.state_changed.emit("SPEAKING")
                         ui_bus.response_complete.emit()
-                    return canned, tools_used
+                    messages.append({"role": "assistant", "content": canned})
+                    return canned, tools_used, messages[initial_len:]
 
             continue
 
@@ -347,7 +353,9 @@ def run_llm_with_tools(
                 ui_bus.response_complete.emit()
         full_response = text_buffer.strip()
 
-    return full_response, tools_used
+    if full_response:
+        messages.append({"role": "assistant", "content": full_response})
+    return full_response, tools_used, messages[initial_len:]
 
 
 def run_streaming_llm(
@@ -359,11 +367,12 @@ def run_streaming_llm(
     latency: LatencyRecord,
     thinking_proc=None,
     ui_bus=None,
-) -> tuple[str, set[str]]:
+) -> tuple[str, set[str], list[dict]]:
     """Stream LLM → TTS sentence-by-sentence with tool support for cloud models.
 
-    Returns (response_text, tools_used) for consistency with run_llm_with_tools.
-    Cloud path currently doesn't loop tool calls, so tools_used is always empty.
+    Returns (response_text, tools_used, delta_messages) for consistency with
+    run_llm_with_tools. Cloud path currently doesn't loop tool calls, so
+    tools_used is always empty and delta_messages contains only the final response.
     ui_bus is optional; when provided, streaming tokens are emitted to the UI.
     """
     full_text = ""
@@ -390,7 +399,9 @@ def run_streaming_llm(
     print()  # Newline after streaming
     if ui_bus is not None:
         ui_bus.response_complete.emit()
-    return full_text.strip(), set()
+    response = full_text.strip()
+    delta = [{"role": "assistant", "content": response}] if response else []
+    return response, set(), delta
 
 
 # ---------------------------------------------------------------------------

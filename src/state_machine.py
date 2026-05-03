@@ -245,14 +245,10 @@ class AssistantFSM:
 
         # Build messages with memory context
         self.conversation.append({"role": "user", "content": decision.cleaned_text})
-        # Strip tool_call and tool_result messages — only keep user turns and final
-        # assistant text. Tool messages inflate context with JSON noise.
-        conversational = [
-            m for m in self.conversation
-            if m["role"] == "user"
-            or (m["role"] == "assistant" and m.get("content") and not m.get("tool_calls"))
-        ]
-        recent = conversational[-10:]
+        # Include tool call and tool result messages so the small local model sees
+        # the full tool-call pattern and doesn't copy canned responses verbatim.
+        # Keep last 6 conversational turns to limit context size on the RPi.
+        recent = self.conversation[-6:]
 
         # Tell the model which backend it's running on
         model_info = f"You are running as: {backend.name} (backend: {decision.backend_key})"
@@ -262,9 +258,10 @@ class AssistantFSM:
 
         # LLM + Tools + TTS
         tools_used: set[str] = set()
+        tool_delta: list[dict] = []
         try:
             if isinstance(backend, (OllamaBackend, LlamaCppBackend, GeminiBackend, ClaudeBackend)):
-                response, tools_used = run_llm_with_tools(
+                response, tools_used, tool_delta = run_llm_with_tools(
                     backend,
                     list(recent),
                     ALL_TOOLS,
@@ -275,7 +272,7 @@ class AssistantFSM:
                     ui_bus=self.ui_bus,
                 )
             else:
-                response, tools_used = run_streaming_llm(
+                response, tools_used, tool_delta = run_streaming_llm(
                     backend,
                     list(recent),
                     ALL_TOOLS,
@@ -298,8 +295,9 @@ class AssistantFSM:
                 if self.ui_bus is not None:
                     self.ui_bus.model_changed.emit(fallback_key, fallback.name)
                 try:
-                    if isinstance(fallback, (OllamaBackend, LlamaCppBackend, GeminiBackend, ClaudeBackend)):
-                        response, tools_used = run_llm_with_tools(
+                    _local_backends = (OllamaBackend, LlamaCppBackend, GeminiBackend, ClaudeBackend)
+                    if isinstance(fallback, _local_backends):
+                        response, tools_used, tool_delta = run_llm_with_tools(
                             fallback,
                             list(recent),
                             ALL_TOOLS,
@@ -310,7 +308,7 @@ class AssistantFSM:
                             ui_bus=self.ui_bus,
                         )
                     else:
-                        response, tools_used = run_streaming_llm(
+                        response, tools_used, tool_delta = run_streaming_llm(
                             fallback,
                             list(recent),
                             ALL_TOOLS,
@@ -331,7 +329,9 @@ class AssistantFSM:
         if tools_used & VOLATILE_TOOLS:
             self.conversation.pop()  # Remove user message — no stale data in context
         else:
-            self.conversation.append({"role": "assistant", "content": response})
+            # Extend with full delta (tool calls, results, final response) so the
+            # local 2B model sees the correct tool-call pattern on the next turn.
+            self.conversation.extend(tool_delta)
 
         # Metrics
         latency.total_ms = (time.perf_counter() - start) * 1000

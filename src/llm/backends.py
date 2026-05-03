@@ -500,8 +500,10 @@ class LlamaCppBackend:
                                 tool_acc[idx]["name"] += fn["name"]
                             tool_acc[idx]["args_str"] += fn.get("arguments", "")
 
-                        # Flush complete tool calls when server signals finish
-                        if finish_reason == "tool_calls" and tool_acc:
+                        # Flush complete tool calls when server signals finish.
+                        # Some llama.cpp builds send "stop" instead of "tool_calls";
+                        # flush on any terminal signal if we accumulated tool data.
+                        if finish_reason and tool_acc:
                             calls: list[ToolCall] = []
                             for acc in (tool_acc[i] for i in sorted(tool_acc)):
                                 try:
