@@ -36,7 +36,18 @@ from src.tts.engine import TTSEngine
 log = logging.getLogger(__name__)
 
 # Max tool-call rounds to prevent infinite loops
-MAX_TOOL_ROUNDS = 3
+MAX_TOOL_ROUNDS = 2
+
+# Tools that don't need a second LLM call — the tool result is spoken directly.
+# Query tools (get_weather, web_search, recall, etc.) still go through LLM synthesis.
+ACTION_TOOLS: frozenset[str] = frozenset({
+    "set_volume",
+    "stop_radio",
+    "set_timer",
+    "cancel_timer",
+    "add_to_shopping_list",
+    "remember",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +279,30 @@ def run_llm_with_tools(
                         "content": result,
                     }
                 )
+
+            # Action-only tools: speak the tool result directly, skip LLM round 2.
+            # Falls through to LLM if any result is an error string.
+            if all(tc.name in ACTION_TOOLS for tc in tool_calls):
+                results = [m["content"] for m in messages if m["role"] == "tool"][-len(tool_calls):]
+                if not any(r.startswith("ERROR:") for r in results):
+                    canned = " ".join(results)
+
+                    def _canned_gen():
+                        yield canned
+
+                    printed_prefix = False
+                    for text in tts.stream_speak(_canned_gen(), latency=latency):
+                        if not printed_prefix:
+                            print("\n🤖 ", end="", flush=True)
+                            printed_prefix = True
+                        print(text, end="", flush=True)
+                    if printed_prefix:
+                        print()
+                    if ui_bus is not None:
+                        ui_bus.state_changed.emit("SPEAKING")
+                        ui_bus.response_complete.emit()
+                    return canned, tools_used
+
             continue
 
         # No tool calls — this is the final text response

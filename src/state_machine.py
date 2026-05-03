@@ -245,7 +245,14 @@ class AssistantFSM:
 
         # Build messages with memory context
         self.conversation.append({"role": "user", "content": decision.cleaned_text})
-        recent = self.conversation[-10:]
+        # Strip tool_call and tool_result messages — only keep user turns and final
+        # assistant text. Tool messages inflate context with JSON noise.
+        conversational = [
+            m for m in self.conversation
+            if m["role"] == "user"
+            or (m["role"] == "assistant" and m.get("content") and not m.get("tool_calls"))
+        ]
+        recent = conversational[-10:]
 
         # Tell the model which backend it's running on
         model_info = f"You are running as: {backend.name} (backend: {decision.backend_key})"
