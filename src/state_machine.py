@@ -284,7 +284,7 @@ class AssistantFSM:
                 )
                 log.info("Explicit backend request failed — voicing error, resetting preference")
                 self.router.session_preference = None
-                self.tts.speak(error_msg)
+                self._speak_with_ui(error_msg)
                 response = error_msg
             else:
                 fallback = self.router.get_fallback(decision.backend_key)
@@ -309,10 +309,10 @@ class AssistantFSM:
                         )
                     except Exception:
                         response = "Sorry, I'm having trouble right now."
-                        self.tts.speak(response)
+                        self._speak_with_ui(response)
                 else:
                     response = "Sorry, I'm having trouble right now."
-                    self.tts.speak(response)
+                    self._speak_with_ui(response)
 
         # Store response in conversation history
         if tools_used & VOLATILE_TOOLS:
@@ -353,6 +353,15 @@ class AssistantFSM:
         resume()
 
         return State.IDLE, {}
+
+    def _speak_with_ui(self, text: str) -> None:
+        """Speak text and mirror it to the UI chat view."""
+        if self.ui_bus is not None:
+            self.ui_bus.state_changed.emit("SPEAKING")
+            self.ui_bus.text_chunk.emit(text)
+        self.tts.speak(text)
+        if self.ui_bus is not None:
+            self.ui_bus.response_complete.emit()
 
     # ------------------------------------------------------------------
     # State: SHUTDOWN
