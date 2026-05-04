@@ -8,11 +8,11 @@ Thinking is disabled for both:
                (most reliable: start llama-server with --reasoning-budget 0)
 
 Usage:
-    uv run scripts/bench_vs.py
-    uv run scripts/bench_vs.py --ollama-model gemma4:e2b --rounds 2
-    uv run scripts/bench_vs.py --ollama-url http://localhost:11434 \\
-                                --llama-url  http://localhost:8080
-    uv run scripts/bench_vs.py -o results.json
+    uv run scripts/bench_llama_vs_ollama.py
+    uv run scripts/bench_llama_vs_ollama.py --ollama-model gemma4:e2b --rounds 2
+    uv run scripts/bench_llama_vs_ollama.py --ollama-url http://localhost:11434 \\
+                                             --llama-url  http://localhost:8080
+    uv run scripts/bench_llama_vs_ollama.py -o results.json
 """
 
 import argparse
