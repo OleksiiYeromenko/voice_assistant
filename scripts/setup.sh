@@ -37,33 +37,45 @@ fi
 
 # 2. Python dependencies
 echo "→ Installing Python dependencies..."
-uv sync
-uv sync --extra cloud --extra tools
+uv sync --extra cloud --extra tools --extra ui
 echo "  ✓ Python deps installed"
 
 # 3. openWakeWord base models
-# These are Git LFS files in the upstream repo and are not downloaded by `uv sync`.
-# Without them the wake word detector falls back to keyboard mode.
+# The git-based install skips LFS files so melspectrogram.onnx / embedding_model.onnx
+# are missing after `uv sync`. Fix: trigger openwakeword's own auto-download by
+# instantiating Model(), which writes the binaries into the package resources dir.
 echo "→ Checking openWakeWord base models..."
-OWW_MODELS=$(uv run python -c \
-  "import openwakeword, os; print(os.path.join(os.path.dirname(openwakeword.__file__), 'resources', 'models'))" \
-  2>/dev/null)
-if [ -n "$OWW_MODELS" ]; then
-    mkdir -p "$OWW_MODELS"
-    BASE_URL="https://media.githubusercontent.com/media/dscripka/openWakeWord/e49345a/openwakeword/resources/models"
-    ALL_PRESENT=true
-    for MODEL in melspectrogram.onnx embedding_model.onnx; do
-        DEST="$OWW_MODELS/$MODEL"
-        # LFS pointer files are tiny (~130 bytes) — re-download if size < 10 KB
-        if [ ! -f "$DEST" ] || [ "$(wc -c < "$DEST")" -lt 10240 ]; then
-            echo "  Downloading $MODEL ..."
-            wget -q -O "$DEST" "$BASE_URL/$MODEL" || { echo "  ✗ Failed — copy manually from a working venv"; ALL_PRESENT=false; }
-        fi
-    done
-    $ALL_PRESENT && echo "  ✓ openWakeWord base models present"
-else
-    echo "  ⚠ Could not locate openWakeWord package"
-fi
+uv run python - << 'PYEOF'
+import sys
+from pathlib import Path
+
+try:
+    import openwakeword
+    models_dir = Path(openwakeword.__file__).parent / "resources" / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    # Remove any LFS pointer files (valid ONNX files are > 1 MB)
+    for p in models_dir.glob("*.onnx"):
+        if p.stat().st_size < 10_240:
+            p.unlink()
+
+    missing = [f for f in ("melspectrogram.onnx", "embedding_model.onnx")
+               if not (models_dir / f).exists()]
+
+    if missing:
+        print(f"  Downloading base models via openwakeword.Model()...")
+        openwakeword.Model(wakeword_models=[])  # triggers auto-download
+        still_missing = [f for f in missing if not (models_dir / f).exists()]
+        if still_missing:
+            print(f"  ✗ Still missing: {still_missing}")
+            print("    Copy manually: cp /path/to/backup/.venv/.../openwakeword/resources/models/*.onnx \\")
+            print(f"      {models_dir}/")
+            sys.exit(1)
+    print("  ✓ openWakeWord base models present")
+except Exception as e:
+    print(f"  ✗ {e}")
+    sys.exit(1)
+PYEOF
 
 # 5. Ollama model
 echo "→ Checking Ollama model..."
