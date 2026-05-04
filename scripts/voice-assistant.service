@@ -1,15 +1,16 @@
 # Voice Assistant — systemd service (headless / console mode)
 #
 # Runs with wake word detection, no GUI.
-# Install:  va install            (auto-detects project dir and user)
-#       OR  manually: edit @@…@@ placeholders, then cp to /etc/systemd/system/
+# Install:  sudo cp scripts/voice-assistant.service /etc/systemd/system/
+#           sudo systemctl daemon-reload
+#           sudo systemctl enable --now voice-assistant
 #
 # Logs:     journalctl -u voice-assistant -f
 # Status:   systemctl status voice-assistant
 
 [Unit]
 Description=Voice Assistant (Poondyk)
-Documentation=file://@@PROJECT_DIR@@/README.md
+Documentation=file:///home/pi/Projects/voice_assistant/README.md
 After=network-online.target sound.target ollama.service
 Wants=network-online.target ollama.service
 
@@ -18,13 +19,13 @@ Wants=network-online.target ollama.service
 
 [Service]
 Type=simple
-User=@@USER@@
-Group=@@USER@@
+User=pi
+Group=pi
 
-WorkingDirectory=@@PROJECT_DIR@@
+WorkingDirectory=/home/pi/Projects/voice_assistant
 
 # Use uv to run inside the project venv automatically
-ExecStart=@@UV@@ run python -m src.main
+ExecStart=/home/pi/.local/bin/uv run python -m src.main
 
 # Restart on crash, but not on clean shutdown (Ctrl-C / SIGTERM)
 Restart=on-failure
@@ -34,14 +35,14 @@ RestartSec=5
 TimeoutStopSec=10
 
 # Environment — audio and locale
-Environment="HOME=@@HOME@@"
-Environment="PATH=@@HOME@@/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-Environment="XDG_RUNTIME_DIR=/run/user/@@UID@@"
+Environment="HOME=/home/pi"
+Environment="PATH=/home/pi/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
 
 # Cloud API keys (uncomment and set if using Claude/Gemini)
 # Environment="ANTHROPIC_API_KEY=sk-ant-..."
 # Environment="GOOGLE_API_KEY=..."
-EnvironmentFile=-@@PROJECT_DIR@@/.env
+EnvironmentFile=-/home/pi/Projects/voice_assistant/.env
 
 # Resource limits — generous for RPi 5 16GB
 MemoryMax=8G
@@ -50,10 +51,10 @@ CPUQuota=300%
 # Security hardening (compatible with audio + network access)
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=@@PROJECT_DIR@@/data
-ReadWritePaths=@@PROJECT_DIR@@/memory
-ReadWritePaths=@@PROJECT_DIR@@/tts_output
-ReadWritePaths=@@PROJECT_DIR@@/stt_output
+ReadWritePaths=/home/pi/Projects/voice_assistant/data
+ReadWritePaths=/home/pi/Projects/voice_assistant/memory
+ReadWritePaths=/home/pi/Projects/voice_assistant/tts_output
+ReadWritePaths=/home/pi/Projects/voice_assistant/stt_output
 ProtectHome=no
 PrivateTmp=yes
 
