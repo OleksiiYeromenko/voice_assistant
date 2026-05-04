@@ -1,6 +1,6 @@
 # Voice Assistant — RPi 5 Home Lab
 
-> Local-first voice assistant with smart cloud fallback, running on Raspberry Pi 5.
+> Local-first voice assistant running on Raspberry Pi 5.
 
 ![Idle screen](docs/images/ui-screenshot.png)
 
@@ -245,7 +245,7 @@ tail -f data/logs/assistant.log
 | Component | RAM | CPU |
 |---|---|---|
 | OS + services | ~1 GB | — |
-| Ollama (qwen3:4b) | ~3–4 GB | 100% during inference |
+| llama.cpp (gemma4-e2b-q4km) | ~2.5–3 GB | 100% during inference |
 | faster-whisper (base.en) | ~0.5 GB | burst |
 | openWakeWord | ~50 MB | ~5% continuous |
 | Piper TTS | ~100 MB | burst |
