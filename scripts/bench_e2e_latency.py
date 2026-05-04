@@ -97,12 +97,24 @@ class ComponentTime:
 
 
 @dataclass
+class ComponentRate:
+    value: float | None  # tok/s, None = skipped or failed
+    error: str = ""
+
+    def fmt(self) -> str:
+        if self.value is None:
+            return "—" if not self.error else "ERR"
+        return f"{self.value:.1f}"
+
+
+@dataclass
 class BackendResult:
     label: str
     model: str
     hardware: str
     stt: ComponentTime = field(default_factory=lambda: ComponentTime(None))
     llm_ttft: ComponentTime = field(default_factory=lambda: ComponentTime(None))
+    llm_tps: ComponentRate = field(default_factory=lambda: ComponentRate(None))
     tts: ComponentTime = field(default_factory=lambda: ComponentTime(None))
 
     @property
@@ -221,9 +233,10 @@ def bench_tts(rounds: int) -> ComponentTime:
 
 
 # ---------------------------------------------------------------------------
-# LLM TTFT — llama.cpp (local RPi)
+# LLM TTFT + TPS — llama.cpp (local RPi)
 # ---------------------------------------------------------------------------
-def _llama_ttft(client: httpx.Client, base_url: str, prompt: str) -> float:
+def _llama_bench(client: httpx.Client, base_url: str, prompt: str) -> tuple[float, float]:
+    """Returns (ttft_s, tok_per_s) for one prompt."""
     payload = {
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -234,9 +247,12 @@ def _llama_ttft(client: httpx.Client, base_url: str, prompt: str) -> float:
         "max_tokens": 200,
         "chat_template_kwargs": {"enable_thinking": False},
         "thinking_budget_tokens": 0,
+        "stream_options": {"include_usage": True},
     }
     t_start = time.perf_counter()
     t_first: float | None = None
+    completion_tokens = 0
+    generated_tokens = 0
     with client.stream(
         "POST",
         f"{base_url}/v1/chat/completions",
@@ -254,15 +270,22 @@ def _llama_ttft(client: httpx.Client, base_url: str, prompt: str) -> float:
                 chunk = json.loads(data)
             except json.JSONDecodeError:
                 continue
+            if chunk.get("usage"):
+                completion_tokens = chunk["usage"].get("completion_tokens", 0)
             choices = chunk.get("choices", [])
             if choices and choices[0].get("delta", {}).get("content"):
                 if t_first is None:
                     t_first = time.perf_counter()
-                    return t_first - t_start
-    return (t_first or time.perf_counter()) - t_start
+                generated_tokens += 1
+    t_end = time.perf_counter()
+    tokens = completion_tokens if completion_tokens > 0 else generated_tokens
+    total = t_end - t_start
+    ttft = (t_first - t_start) if t_first else total
+    tps = tokens / total if total > 0 else 0.0
+    return ttft, tps
 
 
-def bench_llama(rounds: int, prompts: list[str]) -> ComponentTime:
+def bench_llama(rounds: int, prompts: list[str]) -> tuple[ComponentTime, ComponentRate]:
     url = LLAMA_URL
     print(f"\n[LLM] llama.cpp (RPi5 local)  {url}")
     try:
@@ -273,9 +296,11 @@ def bench_llama(rounds: int, prompts: list[str]) -> ComponentTime:
         print(f"  Model: {model_name}")
     except Exception as e:
         print(f"  UNREACHABLE: {e}")
-        return ComponentTime(None, str(e))
+        err = ComponentTime(None, str(e))
+        return err, ComponentRate(None, str(e))
 
-    times: list[float] = []
+    ttfts: list[float] = []
+    tpss: list[float] = []
     with httpx.Client() as client:
         for r_idx in range(rounds):
             if rounds > 1:
@@ -284,17 +309,20 @@ def bench_llama(rounds: int, prompts: list[str]) -> ComponentTime:
                 short = prompt[:50]
                 print(f"    \"{short}\"", end=" ", flush=True)
                 try:
-                    ttft = _llama_ttft(client, url, prompt)
-                    times.append(ttft)
-                    print(f"TTFT {ttft:.2f}s")
+                    ttft, tps = _llama_bench(client, url, prompt)
+                    ttfts.append(ttft)
+                    tpss.append(tps)
+                    print(f"TTFT {ttft:.2f}s  {tps:.1f} tok/s")
                 except Exception as e:
                     print(f"ERROR: {e}")
 
-    if not times:
-        return ComponentTime(None, "all runs failed")
-    avg = sum(times) / len(times)
-    print(f"  Avg TTFT: {avg:.2f}s")
-    return ComponentTime(avg)
+    if not ttfts:
+        err = "all runs failed"
+        return ComponentTime(None, err), ComponentRate(None, err)
+    avg_ttft = sum(ttfts) / len(ttfts)
+    avg_tps = sum(tpss) / len(tpss)
+    print(f"  Avg TTFT: {avg_ttft:.2f}s  Avg tok/s: {avg_tps:.1f}")
+    return ComponentTime(avg_ttft), ComponentRate(avg_tps)
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +335,7 @@ def _ollama_chat(client, **kwargs):
         return client.chat(**kwargs)
 
 
-def bench_ollama(rounds: int, prompts: list[str]) -> ComponentTime:
+def bench_ollama(rounds: int, prompts: list[str]) -> tuple[ComponentTime, ComponentRate]:
     url = OLLAMA_URL
     model = OLLAMA_MODEL
     print(f"\n[LLM] Ollama (GPU remote)  {url}  model={model}")
@@ -315,7 +343,8 @@ def bench_ollama(rounds: int, prompts: list[str]) -> ComponentTime:
         import ollama as ollama_lib
     except ImportError:
         print("  SKIP (ollama package not installed)")
-        return ComponentTime(None, "ollama not installed")
+        err = "ollama not installed"
+        return ComponentTime(None, err), ComponentRate(None, err)
 
     client = ollama_lib.Client(host=url)
 
@@ -333,9 +362,11 @@ def bench_ollama(rounds: int, prompts: list[str]) -> ComponentTime:
         print(f"{load_s:.1f}s")
     except Exception as e:
         print(f"FAILED: {e}")
-        return ComponentTime(None, str(e))
+        err = str(e)
+        return ComponentTime(None, err), ComponentRate(None, err)
 
-    times: list[float] = []
+    ttfts: list[float] = []
+    tpss: list[float] = []
     for r_idx in range(rounds):
         if rounds > 1:
             print(f"  Round {r_idx + 1}/{rounds}")
@@ -345,6 +376,7 @@ def bench_ollama(rounds: int, prompts: list[str]) -> ComponentTime:
             try:
                 t_start = time.perf_counter()
                 t_first: float | None = None
+                tokens = 0
                 for chunk in _ollama_chat(
                     client,
                     model=model,
@@ -358,10 +390,15 @@ def bench_ollama(rounds: int, prompts: list[str]) -> ComponentTime:
                     content = chunk.get("message", {}).get("content", "")
                     if content and t_first is None:
                         t_first = time.perf_counter()
-                        break
-                ttft = (t_first - t_start) if t_first else (time.perf_counter() - t_start)
-                times.append(ttft)
-                print(f"TTFT {ttft:.2f}s")
+                    if chunk.get("done"):
+                        tokens = chunk.get("eval_count", tokens)
+                t_end = time.perf_counter()
+                total = t_end - t_start
+                ttft = (t_first - t_start) if t_first else total
+                tps = tokens / total if total > 0 else 0.0
+                ttfts.append(ttft)
+                tpss.append(tps)
+                print(f"TTFT {ttft:.2f}s  {tps:.1f} tok/s")
             except Exception as e:
                 print(f"ERROR: {e}")
 
@@ -371,33 +408,38 @@ def bench_ollama(rounds: int, prompts: list[str]) -> ComponentTime:
     except Exception:
         pass
 
-    if not times:
-        return ComponentTime(None, "all runs failed")
-    avg = sum(times) / len(times)
-    print(f"  Avg TTFT: {avg:.2f}s")
-    return ComponentTime(avg)
+    if not ttfts:
+        err = "all runs failed"
+        return ComponentTime(None, err), ComponentRate(None, err)
+    avg_ttft = sum(ttfts) / len(ttfts)
+    avg_tps = sum(tpss) / len(tpss)
+    print(f"  Avg TTFT: {avg_ttft:.2f}s  Avg tok/s: {avg_tps:.1f}")
+    return ComponentTime(avg_ttft), ComponentRate(avg_tps)
 
 
 # ---------------------------------------------------------------------------
 # LLM TTFT — Claude Haiku
 # ---------------------------------------------------------------------------
-def bench_claude(rounds: int, prompts: list[str]) -> ComponentTime:
+def bench_claude(rounds: int, prompts: list[str]) -> tuple[ComponentTime, ComponentRate]:
     model = CLAUDE_MODEL
     print(f"\n[LLM] Claude  model={model}")
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("  SKIP (ANTHROPIC_API_KEY not set)")
-        return ComponentTime(None, "ANTHROPIC_API_KEY not set")
+        err = "ANTHROPIC_API_KEY not set"
+        return ComponentTime(None, err), ComponentRate(None, err)
 
     try:
         import anthropic
     except ImportError:
         print("  SKIP (anthropic package not installed)")
-        return ComponentTime(None, "anthropic not installed")
+        err = "anthropic not installed"
+        return ComponentTime(None, err), ComponentRate(None, err)
 
     client = anthropic.Anthropic(api_key=api_key)
-    times: list[float] = []
+    ttfts: list[float] = []
+    tpss: list[float] = []
 
     for r_idx in range(rounds):
         if rounds > 1:
@@ -420,41 +462,51 @@ def bench_claude(rounds: int, prompts: list[str]) -> ComponentTime:
                         if event.type == "content_block_delta" and hasattr(event.delta, "text"):
                             if event.delta.text and t_first is None:
                                 t_first = time.perf_counter()
-                                break
-                ttft = (t_first - t_start) if t_first else (time.perf_counter() - t_start)
-                times.append(ttft)
-                print(f"TTFT {ttft:.2f}s")
+                    usage = stream.get_final_usage()
+                    tokens = usage.output_tokens if usage else 0
+                t_end = time.perf_counter()
+                total = t_end - t_start
+                ttft = (t_first - t_start) if t_first else total
+                tps = tokens / total if total > 0 else 0.0
+                ttfts.append(ttft)
+                tpss.append(tps)
+                print(f"TTFT {ttft:.2f}s  {tps:.1f} tok/s")
             except Exception as e:
                 print(f"ERROR: {e}")
 
-    if not times:
-        return ComponentTime(None, "all runs failed")
-    avg = sum(times) / len(times)
-    print(f"  Avg TTFT: {avg:.2f}s")
-    return ComponentTime(avg)
+    if not ttfts:
+        err = "all runs failed"
+        return ComponentTime(None, err), ComponentRate(None, err)
+    avg_ttft = sum(ttfts) / len(ttfts)
+    avg_tps = sum(tpss) / len(tpss)
+    print(f"  Avg TTFT: {avg_ttft:.2f}s  Avg tok/s: {avg_tps:.1f}")
+    return ComponentTime(avg_ttft), ComponentRate(avg_tps)
 
 
 # ---------------------------------------------------------------------------
 # LLM TTFT — Gemini
 # ---------------------------------------------------------------------------
-def bench_gemini(rounds: int, prompts: list[str]) -> ComponentTime:
+def bench_gemini(rounds: int, prompts: list[str]) -> tuple[ComponentTime, ComponentRate]:
     model = GEMINI_MODEL
     print(f"\n[LLM] Gemini  model={model}")
 
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         print("  SKIP (GOOGLE_API_KEY not set)")
-        return ComponentTime(None, "GOOGLE_API_KEY not set")
+        err = "GOOGLE_API_KEY not set"
+        return ComponentTime(None, err), ComponentRate(None, err)
 
     try:
         from google import genai
         from google.genai import types
     except ImportError:
         print("  SKIP (google-genai package not installed)")
-        return ComponentTime(None, "google-genai not installed")
+        err = "google-genai not installed"
+        return ComponentTime(None, err), ComponentRate(None, err)
 
     client = genai.Client(api_key=api_key)
-    times: list[float] = []
+    ttfts: list[float] = []
+    tpss: list[float] = []
 
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
@@ -471,6 +523,7 @@ def bench_gemini(rounds: int, prompts: list[str]) -> ComponentTime:
             try:
                 t_start = time.perf_counter()
                 t_first: float | None = None
+                tokens = 0
                 for chunk in client.models.generate_content_stream(
                     model=model,
                     contents=prompt,
@@ -478,52 +531,59 @@ def bench_gemini(rounds: int, prompts: list[str]) -> ComponentTime:
                 ):
                     if chunk.text and t_first is None:
                         t_first = time.perf_counter()
-                        break
-                ttft = (t_first - t_start) if t_first else (time.perf_counter() - t_start)
-                times.append(ttft)
-                print(f"TTFT {ttft:.2f}s")
+                    if chunk.usage_metadata:
+                        tokens = chunk.usage_metadata.candidates_token_count or tokens
+                t_end = time.perf_counter()
+                total = t_end - t_start
+                ttft = (t_first - t_start) if t_first else total
+                tps = tokens / total if total > 0 else 0.0
+                ttfts.append(ttft)
+                tpss.append(tps)
+                print(f"TTFT {ttft:.2f}s  {tps:.1f} tok/s")
             except Exception as e:
                 print(f"ERROR: {e}")
 
-    if not times:
-        return ComponentTime(None, "all runs failed")
-    avg = sum(times) / len(times)
-    print(f"  Avg TTFT: {avg:.2f}s")
-    return ComponentTime(avg)
+    if not ttfts:
+        err = "all runs failed"
+        return ComponentTime(None, err), ComponentRate(None, err)
+    avg_ttft = sum(ttfts) / len(ttfts)
+    avg_tps = sum(tpss) / len(tpss)
+    print(f"  Avg TTFT: {avg_ttft:.2f}s  Avg tok/s: {avg_tps:.1f}")
+    return ComponentTime(avg_ttft), ComponentRate(avg_tps)
 
 
 # ---------------------------------------------------------------------------
 # Output table
 # ---------------------------------------------------------------------------
 def print_table(results: list[BackendResult], stt_shared: ComponentTime, tts_shared: ComponentTime) -> None:
-    W = 90
+    W = 100
     print("\n" + "=" * W)
     print("  END-TO-END LATENCY: spoken question → first word of spoken answer")
     print("=" * W)
-    print(f"  {'BACKEND':<28} {'HARDWARE':<18} {'STT':>7} {'LLM TTFT':>10} {'TTS 1st':>9} {'TOTAL':>8}")
-    print(f"  {'':28} {'':18} {'(transcr)':>7} {'(1st token)':>10} {'(synth)':>9} {'':>8}")
+    print(f"  {'BACKEND':<28} {'HARDWARE':<18} {'STT':>7} {'LLM TTFT':>10} {'tok/s':>7} {'TTS 1st':>9} {'TOTAL':>8}")
+    print(f"  {'':28} {'':18} {'(transcr)':>7} {'(1st tok)':>10} {'(thruput)':>7} {'(synth)':>9} {'':>8}")
     print("-" * W)
 
     for r in results:
         stt_val = r.stt.fmt() if r.stt.value_s is not None else stt_shared.fmt()
         tts_val = r.tts.fmt() if r.tts.value_s is not None else tts_shared.fmt()
         llm_val = r.llm_ttft.fmt()
+        tps_val = r.llm_tps.fmt()
 
-        # Compute total using shared STT/TTS if backend didn't measure them
         stt_s = r.stt.value_s if r.stt.value_s is not None else (stt_shared.value_s or 0.0)
         tts_s = r.tts.value_s if r.tts.value_s is not None else (tts_shared.value_s or 0.0)
         llm_s = r.llm_ttft.value_s or 0.0
         total = stt_s + llm_s + tts_s
         total_fmt = f"{total:.2f}s" if (stt_s + llm_s + tts_s > 0) else "—"
 
-        print(f"  {r.label:<28} {r.hardware:<18} {stt_val:>7} {llm_val:>10} {tts_val:>9} {total_fmt:>8}")
+        print(f"  {r.label:<28} {r.hardware:<18} {stt_val:>7} {llm_val:>10} {tps_val:>7} {tts_val:>9} {total_fmt:>8}")
 
     print("=" * W)
     if stt_shared.value_s is not None:
         print(f"\n  STT note : {WHISPER_MODEL} (faster-whisper, CPU int8) — identical for all backends")
     if tts_shared.value_s is not None:
         print(f"  TTS note : Piper ({Path(PIPER_VOICE).stem}) — identical for all backends")
-    print(f"  LLM note : TTFT = time from prompt submission to first streamed token")
+    print(f"  LLM note : TTFT = time to first token; tok/s = output throughput over full response")
     print(f"  Prompts  : {len(PROMPTS)} voice-assistant questions, averaged over rounds")
     print("=" * W)
 
@@ -544,6 +604,7 @@ def save_json(
                 "hardware": r.hardware,
                 "stt_s": r.stt.value_s,
                 "llm_ttft_s": r.llm_ttft.value_s,
+                "llm_tps": r.llm_tps.value,
                 "tts_s": r.tts.value_s,
                 "total_s": r.total_s,
                 "errors": {
@@ -603,39 +664,43 @@ def main() -> None:
     results: list[BackendResult] = []
 
     if not args.skip_local:
-        llm = bench_llama(args.rounds, PROMPTS)
+        llm_ttft, llm_tps = bench_llama(args.rounds, PROMPTS)
         results.append(BackendResult(
             label="llama.cpp (RPi5 local)",
             model="gemma4-e2b-q4km",
             hardware="RPi5 16GB (CPU)",
-            llm_ttft=llm,
+            llm_ttft=llm_ttft,
+            llm_tps=llm_tps,
         ))
 
     if not args.skip_remote:
-        llm = bench_ollama(args.rounds, PROMPTS)
+        llm_ttft, llm_tps = bench_ollama(args.rounds, PROMPTS)
         results.append(BackendResult(
             label=f"Ollama ({OLLAMA_MODEL})",
             model=OLLAMA_MODEL,
             hardware="GTX 1070 GPU",
-            llm_ttft=llm,
+            llm_ttft=llm_ttft,
+            llm_tps=llm_tps,
         ))
 
     if not args.skip_claude:
-        llm = bench_claude(args.rounds, PROMPTS)
+        llm_ttft, llm_tps = bench_claude(args.rounds, PROMPTS)
         results.append(BackendResult(
             label="Claude Haiku",
             model=CLAUDE_MODEL,
             hardware="Anthropic cloud",
-            llm_ttft=llm,
+            llm_ttft=llm_ttft,
+            llm_tps=llm_tps,
         ))
 
     if not args.skip_gemini:
-        llm = bench_gemini(args.rounds, PROMPTS)
+        llm_ttft, llm_tps = bench_gemini(args.rounds, PROMPTS)
         results.append(BackendResult(
             label="Gemini Flash",
             model=GEMINI_MODEL,
             hardware="Google cloud",
-            llm_ttft=llm,
+            llm_ttft=llm_ttft,
+            llm_tps=llm_tps,
         ))
 
     if not results:
