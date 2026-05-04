@@ -24,9 +24,10 @@ stt:
 
 # --- LLM ---
 llm:
-  remote_base_url: "http://192.168.1.74:11434"  # GPU PC — Ollama (primary, tried first at startup)
+  preferred_backend: "remote"                    # Default backend: "remote" or "local". Falls back to "local" if preferred is offline.
+  remote_base_url: "http://192.168.1.74:11434"  # GPU PC — Ollama
   remote_model: "gemma4:e4b"                     # Model to activate on GPU if nothing is running
-  local_base_url: "http://localhost:8080"        # RPi — llama.cpp server (fallback if GPU PC unreachable)
+  local_base_url: "http://localhost:8080"        # RPi — llama.cpp server (always-available fallback)
   # llama.cpp server startup (recommended flags for RPi5):
   #   llama-server -m /path/to/model.gguf --port 8080 --ctx-size 2048 -np 1 -t 4 --reasoning-budget 0 \
   #     --cache-type-k q8_0 --cache-type-v q8_0

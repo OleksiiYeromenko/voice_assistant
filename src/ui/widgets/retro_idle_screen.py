@@ -246,7 +246,7 @@ class RetroIdleScreen(QWidget):
       on_model_changed()
     """
 
-    def __init__(self, cfg: dict | None = None, parent=None):
+    def __init__(self, cfg: dict | None = None, health=None, parent=None):
         super().__init__(parent)
         cfg = cfg or {}
         self.setStyleSheet(f"background-color: {T.RETRO_BG};")
@@ -506,9 +506,10 @@ class RetroIdleScreen(QWidget):
         self._scanlines = ScanlineOverlay(self)
 
         # ── Backend monitor ──────────────────────────────────────────────────
-        self._monitor = BackendMonitor(cfg, self)
-        self._monitor.status_updated.connect(self._on_backends_updated)
-        self._monitor.net_updated.connect(self._on_net_updated)
+        self._monitor = BackendMonitor(health, self) if health is not None else None
+        if self._monitor:
+            self._monitor.status_updated.connect(self._on_backends_updated)
+            self._monitor.net_updated.connect(self._on_net_updated)
 
         # ── Timers ───────────────────────────────────────────────────────────
         self._blink_timer = QTimer(self)
@@ -612,7 +613,7 @@ class RetroIdleScreen(QWidget):
         for s in statuses:
             row = self._be_rows.get(s.key)
             if row:
-                row.set_status(s.online, s.sub_model, s.active)
+                row.set_status(s.online, s.model, s.active)
 
     def _on_net_updated(self, online: bool):
         self._net_online = online

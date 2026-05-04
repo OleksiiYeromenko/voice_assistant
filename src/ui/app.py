@@ -143,6 +143,7 @@ class MainWindow(QMainWindow):
         ui_theme: str = "default",
         full_cfg: dict | None = None,
         recipe_timeout_s: int = 300,
+        health=None,
     ):
         super().__init__()
         self._bus = bus
@@ -165,7 +166,7 @@ class MainWindow(QMainWindow):
 
         # Page 0 — idle ambient screen
         if is_retro:
-            self._idle_screen = RetroIdleScreen(cfg=full_cfg or {})
+            self._idle_screen = RetroIdleScreen(cfg=full_cfg or {}, health=health)
         else:
             self._idle_screen = IdleScreen()
         self._stack.addWidget(self._idle_screen)
@@ -330,7 +331,7 @@ class MainWindow(QMainWindow):
             self.showFullScreen()
 
 
-def run_ui(fsm) -> int:
+def run_ui(fsm, health=None) -> int:
     """Launch the Qt UI and run the FSM in a worker thread.
 
     Call this from assistant_loop() when --ui is in sys.argv.
@@ -386,6 +387,7 @@ def run_ui(fsm) -> int:
         ui_theme=str(display_cfg.get("theme", "default")),
         full_cfg=full_cfg,
         recipe_timeout_s=int(display_cfg.get("recipe_timeout_s", 300)),
+        health=health,
     )
     window.show_fullscreen_rpi()
 

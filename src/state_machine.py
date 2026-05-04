@@ -40,7 +40,7 @@ class AssistantFSM:
     dict carrying data between states (e.g. transcribed text, latency record).
     """
 
-    def __init__(self, cfg, stt, tts, backends, router, memory, wake_detector=None):
+    def __init__(self, cfg, stt, tts, backends, router, memory, wake_detector=None, health=None):
         self.cfg = cfg
         self.stt = stt
         self.tts = tts
@@ -48,6 +48,7 @@ class AssistantFSM:
         self.router = router
         self.memory = memory
         self.wake_detector = wake_detector
+        self._health = health
 
         self.conversation: list[dict] = []
         self.last_interaction_time: float | None = None
@@ -238,9 +239,13 @@ class AssistantFSM:
         if self.ui_bus is not None:
             self.ui_bus.model_changed.emit(actual_key, backend.name)
 
+        # Keep UI and health monitor in sync with the active backend
+        if hasattr(self, "_health") and self._health is not None:
+            self._health.set_active(actual_key)
+
         if not isinstance(backend, (OllamaBackend, LlamaCppBackend)):
             print(f"  [Using {actual_key}]")
-        elif actual_key != self.router.default_backend_key:
+        elif actual_key != self.router.preferred_backend_key:
             print(f"  [Using {actual_key}]")
 
         # Build messages with memory context
@@ -271,33 +276,43 @@ class AssistantFSM:
                 ui_bus=self.ui_bus,
             )
         except Exception as e:
-            log.error(f"LLM failed: {e}")
-            fallback = self.router.get_fallback(decision.backend_key)
-            if fallback:
-                fallback_key = next(
-                    (k for k, v in self.router.backends.items() if v is fallback),
-                    "local",
+            log.error(f"LLM failed ({decision.backend_key}): {e}")
+            if decision.is_explicit:
+                # User explicitly requested this backend — voice the error, reset to auto routing.
+                error_msg = (
+                    f"{decision.backend_key} backend failed: {e}. Switching back to automatic mode."
                 )
-                log.info(f"Silently falling back to {fallback_key} ({fallback.name})")
-                if self.ui_bus is not None:
-                    self.ui_bus.model_changed.emit(fallback_key, fallback.name)
-                try:
-                    response, tools_used, tool_delta = run_llm_with_tools(
-                        fallback,
-                        list(recent),
-                        ALL_TOOLS,
-                        system_prompt,
-                        self.tts,
-                        latency,
-                        thinking_proc=thinking_proc,
-                        ui_bus=self.ui_bus,
+                log.info("Explicit backend request failed — voicing error, resetting preference")
+                self.router.session_preference = None
+                self.tts.speak(error_msg)
+                response = error_msg
+            else:
+                fallback = self.router.get_fallback(decision.backend_key)
+                if fallback:
+                    fallback_key = next(
+                        (k for k, v in self.router.backends.items() if v is fallback),
+                        "local",
                     )
-                except Exception:
+                    log.info(f"Silently falling back to {fallback_key} ({fallback.name})")
+                    if self.ui_bus is not None:
+                        self.ui_bus.model_changed.emit(fallback_key, fallback.name)
+                    try:
+                        response, tools_used, tool_delta = run_llm_with_tools(
+                            fallback,
+                            list(recent),
+                            ALL_TOOLS,
+                            system_prompt,
+                            self.tts,
+                            latency,
+                            thinking_proc=thinking_proc,
+                            ui_bus=self.ui_bus,
+                        )
+                    except Exception:
+                        response = "Sorry, I'm having trouble right now."
+                        self.tts.speak(response)
+                else:
                     response = "Sorry, I'm having trouble right now."
                     self.tts.speak(response)
-            else:
-                response = "Sorry, I'm having trouble right now."
-                self.tts.speak(response)
 
         # Store response in conversation history
         if tools_used & VOLATILE_TOOLS:

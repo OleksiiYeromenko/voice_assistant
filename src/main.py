@@ -6,27 +6,25 @@ called by the FSM state handlers.
 """
 
 import logging
-import os
 import sys
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from src.config import load_config
+from src.health import BackendHealthMonitor
 from src.llm.backends import (
     ClaudeBackend,
     GeminiBackend,
     LlamaCppBackend,
     OllamaBackend,
     ToolCall,
-    check_claude_availability,
-    check_gemini_availability,
     check_ollama_connectivity,
     get_running_remote_model,
 )
 from src.memory import MarkdownMemoryStore
 from src.monitor import LatencyRecord, snapshot
-from src.router.router import ModelRouter, RemoteAvailabilityMonitor
+from src.router.router import ModelRouter
 from src.stt.engine import STTEngine
 from src.tools.executor import execute_tool, register_tool
 from src.tools.player import init_player
@@ -53,25 +51,23 @@ ACTION_TOOLS: frozenset[str] = frozenset({
 # ---------------------------------------------------------------------------
 # Backend construction
 # ---------------------------------------------------------------------------
-def build_backends(cfg: dict) -> tuple[dict, str]:
-    """Create LLM backends from config.
+def build_backends(cfg: dict) -> dict:
+    """Create all LLM backend objects from config.
 
-    Returns (backends, default_key) where default_key is "remote" if the GPU
-    PC Ollama is reachable and has a usable model, otherwise "local".
+    Remote backend is always registered regardless of current connectivity —
+    health monitoring handles availability tracking at runtime.
 
-    Remote model selection:
-      1. Use whatever model is currently loaded in RAM on the remote (/api/ps).
-      2. If nothing running, the configured remote_model will be activated by
-         the warm-up loop; if that fails (404) the warm-up loop demotes to local.
+    Remote model selection: use whatever is running in Ollama RAM if reachable
+    at startup, otherwise fall back to the configured remote_model.
     """
-    backends = {}
+    backends: dict = {}
     llm_cfg = cfg["llm"]
     remote_url = llm_cfg.get("remote_base_url", "http://192.168.1.74:11434")
     local_url = llm_cfg.get("local_base_url", "http://localhost:8080")
     model_cfg = llm_cfg["local"]
     preferred_remote_model = llm_cfg.get("remote_model", model_cfg["model"])
 
-    # Local backend (RPi llama.cpp server — always-available fallback)
+    # Local backend — always available, always registered
     backends["local"] = LlamaCppBackend(
         base_url=local_url,
         model=model_cfg.get("model", ""),
@@ -80,40 +76,39 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
         label="local",
     )
 
-    # Remote backend (GPU PC) — only registered if Ollama is reachable
+    # Remote backend — always registered; use running model if reachable, else configured model
     if check_ollama_connectivity(remote_url):
-        # Use whichever model is already in RAM; fall back to preferred_remote_model
         running = get_running_remote_model(remote_url)
         remote_model = running or preferred_remote_model
-        if running:
-            log.info(f"GPU PC Ollama: using running model '{remote_model}'")
-        else:
-            log.info(f"GPU PC Ollama: no model in RAM, will activate '{remote_model}'")
-
-        backends["remote"] = OllamaBackend(
-            model=remote_model,
-            base_url=remote_url,
-            temperature=model_cfg["temperature"],
-            num_ctx=model_cfg["num_ctx"],
-            num_predict=model_cfg.get("num_predict"),
-            num_thread=model_cfg.get("num_thread"),
-            think=model_cfg.get("think", False),
-            label="remote",
+        log.info(
+            f"GPU PC Ollama reachable — using model '{remote_model}'"
+            + (" (already in RAM)" if running else " (will activate)")
         )
-        default_key = "remote"
-        log.info(f"GPU PC Ollama reachable at {remote_url} — using as default")
     else:
-        log.warning(f"GPU PC Ollama not reachable at {remote_url} — falling back to localhost")
-        default_key = "local"
+        remote_model = preferred_remote_model
+        log.warning(
+            f"GPU PC Ollama not reachable at startup — registered with model '{remote_model}'"
+        )
 
-    # Cloud backends — optional, fail gracefully
+    backends["remote"] = OllamaBackend(
+        model=remote_model,
+        base_url=remote_url,
+        temperature=model_cfg["temperature"],
+        num_ctx=model_cfg["num_ctx"],
+        num_predict=model_cfg.get("num_predict"),
+        num_thread=model_cfg.get("num_thread"),
+        think=model_cfg.get("think", False),
+        label="remote",
+    )
+
+    # Cloud backends — optional, fail gracefully if API keys missing
     try:
         cloud_cfg = llm_cfg["cloud"]["claude"]
         backends["claude"] = ClaudeBackend(
             model=cloud_cfg["model"],
             max_tokens=cloud_cfg["max_tokens"],
         )
-        log.info("Claude backend available")
+        log.info("Claude backend registered")
     except Exception as e:
         log.warning(f"Claude backend not available: {e}")
 
@@ -123,11 +118,11 @@ def build_backends(cfg: dict) -> tuple[dict, str]:
             model=cloud_cfg["model"],
             max_tokens=cloud_cfg["max_tokens"],
         )
-        log.info("Gemini backend available")
+        log.info("Gemini backend registered")
     except Exception as e:
         log.warning(f"Gemini backend not available: {e}")
 
-    return backends, default_key
+    return backends
 
 
 # ---------------------------------------------------------------------------
@@ -488,79 +483,52 @@ def assistant_loop(cfg: dict):
     register_alert_callback(tts.speak)
     init_player(cfg)
 
-    backends, default_key = build_backends(cfg)
+    backends = build_backends(cfg)
 
-    # Warm-start: preload model(s) into RAM.
-    # Retry up to 3 times per backend in case Ollama wasn't fully ready at boot.
-    # If the remote model is not installed (404), remote is removed from backends
-    # and default_key falls back to local so no 404 is hit on every query.
-    warm_keys = [default_key]
-    if default_key != "local":
-        warm_keys.append("local")
+    # Health monitor — single source of truth for all backend availability.
+    # Polls remote every 60s, cloud every 5min. Router and UI both read from it.
+    health = BackendHealthMonitor(cfg)
+    health.start()
+
+    preferred_key = cfg["llm"].get("preferred_backend", "remote")
+
+    # Warm-start: preload model(s) into RAM (only if reachable at startup).
+    # Retry up to 3 times for Ollama in case it wasn't fully ready at boot.
+    # If the remote model is not installed (404), skip warm-up for remote.
+    warm_keys = ["remote", "local"] if health.is_up("remote") else ["local"]
     for key in warm_keys:
         b = backends.get(key)
         if not b or not hasattr(b, "warm"):
             continue
-        permanent_failure = False
         for attempt in range(3):
             try:
                 b.warm()
             except Exception as e:
                 if "404" in str(e).lower() or "not found" in str(e).lower():
-                    log.warning(f"{key}: model not installed on server — marking remote as failed")
-                    permanent_failure = True
-                    break  # retrying won't help
-                # transient error (connection refused, timeout) — fall through to retry
+                    log.warning(f"{key}: model not installed on server — skipping warm-up")
+                    break
+                # transient error — retry
             if hasattr(b, "is_loaded") and b.is_loaded():
                 log.info(f"{key} model confirmed loaded in Ollama RAM")
                 break
             if attempt < 2:
                 log.warning(
-                    f"{key} model NOT in Ollama RAM after warm-up attempt "
-                    f"{attempt + 1}/3 — retrying in 5s..."
+                    f"{key} model not in Ollama RAM after attempt {attempt + 1}/3"
+                    " — retrying in 5s..."
                 )
                 time.sleep(5)
         else:
             log.warning(
-                f"{key} model NOT confirmed in Ollama RAM after 3 attempts — "
-                f"first query may be slow"
+                f"{key} model not confirmed in Ollama RAM after 3 attempts"
+                " — first query may be slow"
             )
-        if permanent_failure and key == default_key and key != "local":
-            log.warning(f"Demoting default from '{key}' to 'local'")
-            backends.pop(key, None)
-            default_key = "local"
-
-    # Background monitor: re-checks remote Ollama every 60s so the router
-    # can switch default_backend_key dynamically if GPU PC goes down or comes back.
-    remote_url = cfg["llm"].get("remote_base_url", "http://192.168.1.74:11434")
-    monitor = RemoteAvailabilityMonitor(remote_url, check_interval=60)
-    monitor.start(initial_state=(default_key == "remote"))
 
     router = ModelRouter(
         backends=backends,
         triggers=cfg["llm"]["router"]["triggers"],
-        default_backend_key=default_key,
-        monitor=monitor,
+        preferred_backend_key=preferred_key,
+        health=health,
     )
-
-    # Cloud backend availability checks (zero-cost list-models calls).
-    # Unreachable or auth-failed backends are excluded from auto-routing;
-    # explicit user triggers ("use claude") still bypass this and try anyway.
-    if "claude" in backends:
-        available, reason = check_claude_availability(os.environ.get("ANTHROPIC_API_KEY", ""))
-        if not available:
-            log.warning("Claude unavailable at startup (%s) — excluded from auto-routing", reason)
-            router.unavailable_keys.add("claude")
-        else:
-            log.info("Claude availability check: ok")
-
-    if "gemini" in backends:
-        available, reason = check_gemini_availability(os.environ.get("GOOGLE_API_KEY", ""))
-        if not available:
-            log.warning("Gemini unavailable at startup (%s) — excluded from auto-routing", reason)
-            router.unavailable_keys.add("gemini")
-        else:
-            log.info("Gemini availability check: ok")
 
     # Persistent memory (.md files for profile/facts, SQLite for sessions)
     memory = MarkdownMemoryStore()
@@ -599,12 +567,13 @@ def assistant_loop(cfg: dict):
         router=router,
         memory=memory,
         wake_detector=wake_detector,
+        health=health,
     )
 
     if "--ui" in sys.argv:
         from src.ui.app import run_ui
 
-        sys.exit(run_ui(fsm))
+        sys.exit(run_ui(fsm, health=health))
     else:
         fsm.run()
 

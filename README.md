@@ -1,6 +1,6 @@
 # Voice Assistant — RPi 5 Home Lab
 
-Local-first voice assistant with smart cloud fallback, running on Raspberry Pi 5 (16GB).
+Local-first voice assistant with smart cloud fallback, running on Raspberry Pi 5.
 
 ## Architecture
 
@@ -139,15 +139,17 @@ The assistant routes to the right model automatically:
 
 | Trigger | Backend | Notes |
 |---|---|---|
-| (default, GPU PC reachable) | Remote Ollama (GPU PC) | Fastest |
-| (default, GPU PC down) | Local llama.cpp (RPi) | Always available |
+| (default, `preferred_backend` healthy) | Configured preferred (default: remote) | Fastest |
+| (default, preferred unreachable) | Local llama.cpp (RPi) | Always available |
 | "Use Claude / ask Claude" | Claude | Sticky for session |
 | "Use Gemini / ask Gemini" | Gemini | Sticky for session |
 | "Use GPU / use remote" | Remote Ollama | Sticky for session |
 | "Use local / go offline" | Local llama.cpp | Sticky for session |
 | "Go back to automatic" | Auto | Clears session preference |
 
-Cloud → local fallback happens automatically on network failure.
+`BackendHealthMonitor` (`src/health.py`) polls all backends continuously (remote every 60 s, cloud every 5 min) and is the single source of truth for both the router and the UI. All backends are registered at startup regardless of connectivity.
+
+**Failure handling:** If you explicitly request a backend ("use Claude") and it fails, the assistant voices the error and resets to automatic routing. Silent fallback to `local` applies only to automatic/session-preference routes.
 
 ## Tools
 
@@ -174,12 +176,13 @@ voice-assistant/
 │   ├── main.py                # Entry point + run_llm_with_tools
 │   ├── state_machine.py       # FSM: states, transitions, orchestration
 │   ├── config.py              # Config loader (YAML + VA_ env overrides)
+│   ├── health.py              # BackendHealthMonitor — unified polling for router + UI
 │   ├── audio.py               # ALSA device detection + arecord streaming
 │   ├── monitor.py             # CPU/RAM/temp tracking + latency records
 │   ├── wake_word/detector.py  # openWakeWord integration
 │   ├── stt/engine.py          # faster-whisper STT
 │   ├── llm/backends.py        # OllamaBackend, LlamaCppBackend, ClaudeBackend, GeminiBackend
-│   ├── router/router.py       # Model selection + remote availability monitor
+│   ├── router/router.py       # Model selection logic
 │   ├── tools/
 │   │   ├── executor.py        # Tool schemas + dispatch
 │   │   ├── player.py          # Internet radio via mpv
@@ -203,7 +206,11 @@ Edit `config/config.yaml` or override with environment variables:
 ```bash
 VA_LLM_LOCAL_MODEL=qwen3:1.7b uv run python -m src.main  # Use smaller model
 VA_STT_MODEL=tiny.en uv run python -m src.main            # Faster STT
+VA_LLM_PREFERRED_BACKEND=local uv run python -m src.main  # Default to local backend
 ```
+
+Key config values:
+- `llm.preferred_backend`: Default backend when no session preference is set (`"remote"` or `"local"`, default `"remote"`). The health monitor automatically falls back to `"local"` if the preferred backend is unreachable.
 
 ## Resource Budget (RPi 5, 16GB)
 
