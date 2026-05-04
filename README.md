@@ -67,18 +67,61 @@ The assistant runs as a finite state machine with explicit states and transition
    bash scripts/setup.sh
    ```
 
-2. **Configure:**
-   - Edit `config/config.yaml` for your audio devices and model preferences
-   - Set API keys in `.env` (git-ignored):
-     ```bash
-     echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
-     echo "GOOGLE_API_KEY=..." >> .env
-     ```
+2. **Restore gitignored files** (not in the repo — copy from a backup or create fresh):
 
-3. **Test components:**
+   | File | What it is | How to restore |
+   |---|---|---|
+   | `.env` | API keys | Copy from backup or create (see below) |
+   | `models/*.onnx` | Custom wake word model | Copy from backup |
+   | `memory/USER.md` | User facts/prefs | Copy from backup (or let assistant recreate) |
+
+   ```bash
+   # Minimum .env to get started
+   echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+   echo "GOOGLE_API_KEY=..." >> .env
+   ```
+
+3. **Install the systemd service:**
+   ```bash
+   bash scripts/va install --ui    # UI mode (Raspberry Pi display)
+   bash scripts/va install         # headless / wake word only
+   sudo systemctl start voice-assistant-ui
+   ```
+
+4. **Test components:**
    ```bash
    uv run scripts/test_components.py all
    ```
+
+### Reinstall / Recovery
+
+If the git repo is corrupted (e.g. after a power cut) or you need a clean slate:
+
+```bash
+cd ~/Projects
+
+# Back up gitignored files first
+cp voice_assistant/.env /tmp/va.env 2>/dev/null || true
+cp -r voice_assistant/models /tmp/va-models 2>/dev/null || true
+cp voice_assistant/memory/USER.md /tmp/va-user.md 2>/dev/null || true
+
+# Fresh clone
+mv voice_assistant voice_assistant.bak  # keep as safety net
+git clone <repo-url> voice_assistant
+cd voice_assistant
+
+# Restore gitignored files
+cp /tmp/va.env .env
+cp /tmp/va-models/*.onnx models/ 2>/dev/null || true
+cp /tmp/va-user.md memory/ 2>/dev/null || true
+
+# Setup (downloads deps + openwakeword models + Piper voice)
+bash scripts/setup.sh
+
+# Reinstall service
+bash scripts/va install --ui
+sudo systemctl start voice-assistant-ui
+```
 
 ## Quick Start
 
