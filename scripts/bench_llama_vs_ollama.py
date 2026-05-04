@@ -381,6 +381,10 @@ def main() -> None:
                         help="llama.cpp server URL (default: http://localhost:8080)")
     parser.add_argument("--rounds", type=int, default=1,
                         help="Rounds per prompt — results are averaged (default: 1)")
+    parser.add_argument("--sleep", type=int, default=30,
+                        help="Seconds to cool down between the two backends (default: 30)")
+    parser.add_argument("--order", choices=["ollama-first", "llama-first"], default="ollama-first",
+                        help="Which backend runs first (default: ollama-first)")
     parser.add_argument("--output", "-o", default=None,
                         help="Save full results to JSON file")
     args = parser.parse_args()
@@ -389,14 +393,27 @@ def main() -> None:
     print("  Ollama vs llama.cpp — RPi5 head-to-head benchmark")
     print("=" * 60)
     print(f"  Prompts : {len(PROMPTS)}   Rounds: {args.rounds}")
+    print(f"  Order   : {args.order}   Cool-down: {args.sleep}s")
     print(f"  Ollama  : {args.ollama_url}  model={args.ollama_model}")
     print(f"  llama.cpp: {args.llama_url}")
     print(f"  Thinking: DISABLED for both")
     print(f"  Note: for llama.cpp start server with --reasoning-budget 0")
     print("=" * 60)
 
-    ollama_result = bench_ollama(args.ollama_url, args.ollama_model, args.rounds)
-    llama_result = bench_llama(args.llama_url, args.rounds)
+    def cooldown():
+        if args.sleep > 0:
+            print(f"\nCooling down for {args.sleep}s...", end=" ", flush=True)
+            time.sleep(args.sleep)
+            print("done")
+
+    if args.order == "ollama-first":
+        ollama_result = bench_ollama(args.ollama_url, args.ollama_model, args.rounds)
+        cooldown()
+        llama_result = bench_llama(args.llama_url, args.rounds)
+    else:
+        llama_result = bench_llama(args.llama_url, args.rounds)
+        cooldown()
+        ollama_result = bench_ollama(args.ollama_url, args.ollama_model, args.rounds)
 
     if not ollama_result.runs and not llama_result.runs:
         print("\nBoth backends failed — nothing to compare.")
