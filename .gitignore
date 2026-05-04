@@ -44,3 +44,13 @@ bench_results.json
 skills-lock.json
 _bmad/
 _bmad-output/
+
+# AI agent tooling (local IDE/agent configs — not project code)
+.agent/
+.agents/
+.claude/
+.cursor/
+.gemini/
+.opencode/
+.pi/
+.github/skills/
