@@ -48,15 +48,7 @@ EnvironmentFile=-/home/pi/Projects/voice_assistant/.env.local
 MemoryMax=8G
 CPUQuota=300%
 
-# Security hardening
 NoNewPrivileges=yes
-ProtectSystem=strict
-ReadWritePaths=/home/pi/Projects/voice_assistant/data
-ReadWritePaths=/home/pi/Projects/voice_assistant/memory
-ReadWritePaths=/home/pi/Projects/voice_assistant/tts_output
-ReadWritePaths=/home/pi/Projects/voice_assistant/stt_output
-ProtectHome=no
-PrivateTmp=yes
 
 SupplementaryGroups=audio video render input
 
