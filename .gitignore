@@ -28,11 +28,11 @@ data/
 memory/USER.md
 
 # Custom wake word models (personal — train your own with openWakeWord)
-models/*.onnx
+# models/*.onnx
 
 # Large voice model binaries (download from https://github.com/rhasspy/piper/releases)
-voices/*.onnx
-voices/*.onnx.json
+# voices/*.onnx
+# voices/*.onnx.json
 
 # OS
 .DS_Store
