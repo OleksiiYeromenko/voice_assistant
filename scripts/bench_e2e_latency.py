@@ -40,6 +40,21 @@ import httpx
 import numpy as np
 
 # ---------------------------------------------------------------------------
+# Load .env from repo root (API keys for Claude / Gemini)
+# ---------------------------------------------------------------------------
+_DOTENV = Path(__file__).parent.parent / ".env"
+if _DOTENV.exists():
+    for _line in _DOTENV.read_text().splitlines():
+        _line = _line.strip()
+        if not _line or _line.startswith("#") or "=" not in _line:
+            continue
+        _k, _, _v = _line.partition("=")
+        _k = _k.strip().removeprefix("export").strip()
+        _v = _v.strip().strip('"').strip("'")
+        if _k and _k not in os.environ:
+            os.environ[_k] = _v
+
+# ---------------------------------------------------------------------------
 # Shared configuration
 # ---------------------------------------------------------------------------
 PROMPTS = [
