@@ -1,0 +1,33 @@
+[
+  {
+    "model": "deepseek-r1:1.5b",
+    "load_s": 3.067,
+    "avg_ttft_s": 1.648,
+    "avg_tok_s": 6.6,
+    "avg_total_s": 4.827,
+    "total_tokens": 94,
+    "runs": [
+      {
+        "prompt": "What is the ssh?",
+        "ttft_s": 3.042,
+        "total_s": 8.776,
+        "tok_count": 55,
+        "tok_per_s": 6.3
+      },
+      {
+        "prompt": "Explain gravity in two sentences.",
+        "ttft_s": 0.895,
+        "total_s": 2.9,
+        "tok_count": 21,
+        "tok_per_s": 7.2
+      },
+      {
+        "prompt": "Write a short four-line poem about rain.",
+        "ttft_s": 1.007,
+        "total_s": 2.807,
+        "tok_count": 18,
+        "tok_per_s": 6.4
+      }
+    ]
+  }
+]

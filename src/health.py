@@ -16,7 +16,7 @@ from dataclasses import dataclass
 log = logging.getLogger(__name__)
 
 _POLL_INTERVALS: dict[str, int] = {
-    "remote": 60,
+    "remote": 300,
     "claude": 300,
     "gemini": 300,
 }

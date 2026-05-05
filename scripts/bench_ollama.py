@@ -36,7 +36,7 @@ import ollama
 # Test prompts — short, voice-assistant-style queries
 # ---------------------------------------------------------------------------
 PROMPTS = [
-    "What is the capital of France?",
+    "What is the ssh?",
     "Explain gravity in two sentences.",
     "Write a short four-line poem about rain.",
 ]
