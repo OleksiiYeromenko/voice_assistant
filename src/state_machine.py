@@ -179,6 +179,9 @@ class AssistantFSM:
 
         # --text mode provides text directly; skip LISTENING
         if "text" in ctx:
+            if self.ui_bus is not None:
+                self.ui_bus.state_changed.emit("LISTENING")  # clears log + user label
+                self.ui_bus.user_said.emit(ctx["text"])
             return State.THINKING, ctx
         return State.LISTENING, ctx
 
