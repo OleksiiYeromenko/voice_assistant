@@ -239,6 +239,18 @@ class AssistantFSM:
         )
         log.info(f"Router: {decision.reason} → {backend.name}")
 
+        # Explicit backend switch with no follow-up query (e.g. "switch to remote GPU").
+        # Skip the LLM entirely and just confirm verbally.
+        if decision.is_explicit and not decision.cleaned_text.strip():
+            if thinking_proc is not None:
+                thinking_proc.terminate()
+            confirm = f"Switched to {decision.backend_key}."
+            self._speak_with_ui(confirm)
+            self.last_interaction_time = time.time()
+            from src.tools.player import resume
+            resume()
+            return State.IDLE, {}
+
         if self.ui_bus is not None:
             self.ui_bus.model_changed.emit(actual_key, backend.name)
 

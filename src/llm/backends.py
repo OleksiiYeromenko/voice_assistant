@@ -696,6 +696,9 @@ class GeminiBackend:
             system_instruction=system or "",
             max_output_tokens=self._max_tokens,
             tools=self._convert_tools(tools) if tools else None,
+            # Disable thinking tokens so function_call turns satisfy Gemini's strict
+            # turn-ordering constraint on thinking models (e.g. gemini-3.x-flash-*).
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
 
         try:
@@ -804,6 +807,12 @@ class GeminiBackend:
                 )
 
             i += 1
+
+        # Gemini requires the conversation to start with a user turn.
+        # When the 6-message context window starts mid-history, the first
+        # entry may be a model turn — strip it to keep the format valid.
+        while contents and contents[0].role != "user":
+            contents.pop(0)
 
         return contents
 

@@ -45,7 +45,9 @@ class ModelRouter:
             for pattern in patterns:
                 if pattern in text_lower:
                     cleaned = re.sub(re.escape(pattern), "", text_lower, count=1).strip()
-                    cleaned = cleaned[0].upper() + cleaned[1:] if cleaned else text
+                    # Residual noise ≤3 chars (e.g. "GPU" from "switch to remote GPU")
+                    # is not a real query — treat as empty so the FSM can skip the LLM.
+                    cleaned = cleaned[0].upper() + cleaned[1:] if len(cleaned) > 3 else ""
 
                     if key == "auto":
                         self.session_preference = None
