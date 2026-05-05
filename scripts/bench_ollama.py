@@ -8,6 +8,13 @@ Usage:
     python scripts/bench_ollama.py                  # bench all models
     python scripts/bench_ollama.py qwen2.5:3b       # bench specific model(s)
     python scripts/bench_ollama.py --rounds 3        # average over 3 rounds
+    python scripts/bench_ollama.py --cooldown 60     # 60s thermal cooldown between models
+
+    # RPi model comparison (recommended with --cooldown 60):
+    python scripts/bench_ollama.py \\
+        qwen2.5:3b qwen3:4b-instruct llama3.1:8b deepseek-r1:1.5b \\
+        gemma4:e2b gemma4:e4b qwen3.5:2b qwen3.5:4b \\
+        --cooldown 60 -o rpi_bench.json
 
     # Test thread count impact (Ollama may misdetect on ARM64):
     python scripts/bench_ollama.py qwen2.5:3b --num-thread 2 4 6 8
@@ -258,6 +265,18 @@ def save_json(results: list[ModelResult], path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Cooldown
+# ---------------------------------------------------------------------------
+def _cooldown(seconds: int) -> None:
+    """Busy-wait with a countdown so the terminal stays informative."""
+    print(f"\nCooling down {seconds}s ", end="", flush=True)
+    for remaining in range(seconds, 0, -1):
+        print(f"\r  Cooling down {remaining:3d}s…", end="", flush=True)
+        time.sleep(1)
+    print(f"\r  Cooldown done.          ")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
@@ -277,6 +296,11 @@ def main() -> None:
     parser.add_argument(
         "--output", "-o", default=None,
         help="Save results to JSON file",
+    )
+    parser.add_argument(
+        "--cooldown", type=int, default=0,
+        help="Seconds to wait between models for thermal cooldown (default: 0). "
+             "Use 60 on RPi to prevent CPU throttling from affecting results.",
     )
     parser.add_argument(
         "--num-thread", type=int, nargs="+", default=None,
@@ -336,6 +360,9 @@ def main() -> None:
                     results.append(result)
                 except Exception as e:
                     print(f"  ERROR: {e}\n")
+
+                if combo < total_combos and args.cooldown > 0:
+                    _cooldown(args.cooldown)
 
     if results:
         print_summary(results)
