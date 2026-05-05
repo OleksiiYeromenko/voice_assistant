@@ -141,6 +141,7 @@ def bench_prompt(
     t_start = time.perf_counter()
     t_first: float | None = None
     tok_count = 0
+    in_think_block = False  # tracks leaked <think>…</think> tokens (DeepSeek R1 fallback)
 
     for chunk in _chat_no_think(
         client,
@@ -149,8 +150,29 @@ def bench_prompt(
         stream=True,
         options=options,
     ):
-        content = chunk.get("message", {}).get("content", "")
-        if content and t_first is None:
+        raw = chunk.get("message", {}).get("content", "") or ""
+
+        # Strip any leaked thinking tokens so TTFT reflects the answer, not the reasoning preamble.
+        # think=False + /no_think handle Ollama-aware models; this catches the rest (e.g. deepseek-r1).
+        visible = ""
+        i = 0
+        while i < len(raw):
+            if not in_think_block:
+                start = raw.find("<think>", i)
+                if start == -1:
+                    visible += raw[i:]
+                    break
+                visible += raw[i:start]
+                in_think_block = True
+                i = start + len("<think>")
+            else:
+                end = raw.find("</think>", i)
+                if end == -1:
+                    break  # remainder is thinking; discard
+                in_think_block = False
+                i = end + len("</think>")
+
+        if visible.strip() and t_first is None:
             t_first = time.perf_counter()
         if chunk.get("done"):
             tok_count = chunk.get("eval_count", tok_count)
