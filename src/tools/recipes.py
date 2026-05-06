@@ -85,6 +85,9 @@ GET_RECIPE_TOOL = {
         "description": (
             "Look up a recipe in the family Recipe Library by English name."
             " Returns ingredients and cooking instructions in English."
+            " Call ONLY when the user explicitly asks how to make a dish,"
+            " asks for a recipe, or asks for cooking instructions."
+            " Do NOT call for general questions like 'what is X?' or 'tell me about X'."
         ),
         "parameters": {
             "type": "object",
