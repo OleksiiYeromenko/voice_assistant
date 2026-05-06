@@ -267,6 +267,8 @@ class RetroChatView(QWidget):
 
         self._input_lbl = QLabel()
         self._input_lbl.setStyleSheet(_ss(T.RETRO_TEXT_PRIMARY, _FZ_INPUT, 1))
+        self._input_lbl.setMinimumWidth(0)
+        self._input_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         self._cursor_lbl = QLabel("█")
         self._cursor_lbl.setStyleSheet(_ss("#00ff66", _FZ_INPUT, 0))
