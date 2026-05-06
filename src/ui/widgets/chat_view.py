@@ -18,7 +18,8 @@ class UserSpeechLabel(QLabel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(68)
+        self.setMinimumHeight(48)
+        self.setMaximumHeight(96)
         self.setWordWrap(True)
         self.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self.setContentsMargins(12, 4, 12, 4)
@@ -47,6 +48,7 @@ class ConversationLog(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
+        self.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.document().setDocumentMargin(12)
