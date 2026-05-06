@@ -267,8 +267,9 @@ class RetroChatView(QWidget):
 
         self._input_lbl = QLabel()
         self._input_lbl.setStyleSheet(_ss(T.RETRO_TEXT_PRIMARY, _FZ_INPUT, 1))
-        self._input_lbl.setMinimumWidth(0)
-        self._input_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # Ignored policy makes Qt skip minimumSizeHint() entirely, preventing long
+        # query text from inflating the layout's minimum width beyond the display.
+        self._input_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         self._cursor_lbl = QLabel("█")
         self._cursor_lbl.setStyleSheet(_ss("#00ff66", _FZ_INPUT, 0))
@@ -276,9 +277,8 @@ class RetroChatView(QWidget):
 
         ir_lay.addWidget(self._prompt_sym)
         ir_lay.addSpacing(8)
-        ir_lay.addWidget(self._input_lbl)
+        ir_lay.addWidget(self._input_lbl, 1)  # stretch=1: fills remaining width
         ir_lay.addWidget(self._cursor_lbl)
-        ir_lay.addStretch()
 
         # ── Log area ─────────────────────────────────────────────────────────
         self._log = RetroConversationLog(self)
