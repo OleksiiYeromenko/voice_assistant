@@ -65,7 +65,9 @@ def _get_uptime() -> str:
     try:
         elapsed = time.time() - psutil.boot_time()
         h = int(elapsed // 3600)
-        return f"{h:02d}H"
+        if h < 24:
+            return f"{h:02d}H"
+        return f"{h // 24}D"
     except Exception:
         return "--H"
 
