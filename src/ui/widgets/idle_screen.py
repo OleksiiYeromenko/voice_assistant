@@ -146,7 +146,7 @@ class IdleScreen(QWidget):
     def on_radio_changed(self, station: str):
         """Show or hide the radio indicator in the bottom strip."""
         if station:
-            self._radio_label.setText(f"♪ {station}")
+            self._radio_label.setText(f"♪ {station[:20]}")
             self._radio_label.setVisible(True)
         else:
             self._radio_label.setVisible(False)
