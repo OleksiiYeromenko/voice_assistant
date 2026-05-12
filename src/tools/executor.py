@@ -108,7 +108,12 @@ REMEMBER_TOOL = {
     "type": "function",
     "function": {
         "name": "remember",
-        "description": "Store a fact or preference about the user for future reference.",
+        "description": (
+            "Store a fact or preference about the user for future reference. "
+            "For radio: use 'Likes radio station: [name]' to accumulate liked stations, "
+            "or 'My favorite radio station is [name]' to set the default (overwrites). "
+            "Always use the full station name from <radio_status> context."
+        ),
         "parameters": {
             "type": "object",
             "required": ["fact"],
@@ -191,7 +196,9 @@ PLAY_RADIO_TOOL = {
             "'random' for a random pick (e.g. 'random jazz') and/or a country "
             "(e.g. 'rock Ukraine', 'random pop France'). For a specific station "
             "pass its name (e.g. 'BBC Radio 1'). When the user says 'play some "
-            "radio' with no genre, use their saved favorite station name."
+            "radio' with no genre, use their saved favorite station name. "
+            "Do NOT call when the user asks what is currently playing — "
+            "answer from <radio_status> context instead."
         ),
         "parameters": {
             "type": "object",

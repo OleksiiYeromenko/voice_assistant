@@ -49,7 +49,11 @@ class WakeWordDetector:
         threshold: float = 0.7,
         alsa_device: str | None = None,
         record_detections: bool = False,
+        verifier_model: str | None = None,
+        verifier_threshold: float = 0.1,
     ):
+        import pickle
+
         import openwakeword
         from openwakeword.model import Model
 
@@ -62,6 +66,14 @@ class WakeWordDetector:
         self.threshold = threshold
         self._alsa_device = alsa_device
         self.oww = Model(wakeword_models=[model])
+        self._model_stem = Path(model).stem
+        self._verifier = None
+        self._verifier_threshold = verifier_threshold
+
+        if verifier_model:
+            with open(verifier_model, "rb") as f:
+                self._verifier = pickle.load(f)
+            log.info(f"Verifier loaded: {verifier_model} (gate={verifier_threshold})")
 
         self._record_detections = record_detections
         if record_detections:
@@ -72,9 +84,10 @@ class WakeWordDetector:
 
         log.info(f"Wake word detector ready: '{model}' (threshold={threshold})")
 
-    def _save_capture(self, ring: deque, score: float) -> None:
+    def _save_capture(self, ring: deque, raw_score: float, verifier_score: float | None = None) -> None:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = self._capture_dir / "raw" / f"{ts}_{score:.3f}.wav"
+        score_part = f"{raw_score:.3f}_{verifier_score:.3f}" if verifier_score is not None else f"{raw_score:.3f}"
+        path = self._capture_dir / "raw" / f"{ts}_{score_part}.wav"
         with wave.open(str(path), "wb") as wf:
             wf.setnchannels(CHANNELS)
             wf.setsampwidth(2)
@@ -139,9 +152,20 @@ class WakeWordDetector:
                 audio_16k = np.frombuffer(data, dtype=np.int16)
                 prediction = self.oww.predict(audio_16k)
 
-                for model_name, score in prediction.items():
-                    if score >= self.threshold:
-                        log.info(f"Wake word interrupt '{model_name}': {score:.3f}")
+                for model_name, raw_score in prediction.items():
+                    verifier_score = None
+                    effective_score = raw_score
+                    if self._verifier and raw_score >= self._verifier_threshold:
+                        features = self.oww.preprocessor.get_features(
+                            self.oww.model_inputs[self._model_stem]
+                        )
+                        verifier_score = float(self._verifier.predict_proba(features)[0][-1])
+                        effective_score = verifier_score
+                    if effective_score >= self.threshold:
+                        log.info(
+                            f"Wake word interrupt '{model_name}': "
+                            f"raw={raw_score:.3f} verifier={verifier_score}"
+                        )
                         self.oww.reset()
                         return True
             return False
@@ -209,15 +233,28 @@ class WakeWordDetector:
                         audio_16k = np.frombuffer(data, dtype=np.int16)
                         prediction = self.oww.predict(audio_16k)
 
-                        for model_name, score in prediction.items():
-                            if score >= self.threshold:
-                                log.info(f"Wake word '{model_name}': {score:.3f}")
+                        for model_name, raw_score in prediction.items():
+                            verifier_score = None
+                            effective_score = raw_score
+                            if self._verifier and raw_score >= self._verifier_threshold:
+                                features = self.oww.preprocessor.get_features(
+                                    self.oww.model_inputs[self._model_stem]
+                                )
+                                verifier_score = float(
+                                    self._verifier.predict_proba(features)[0][-1]
+                                )
+                                effective_score = verifier_score
+                            if effective_score >= self.threshold:
+                                log.info(
+                                    f"Wake word '{model_name}': "
+                                    f"raw={raw_score:.3f} verifier={verifier_score}"
+                                )
                                 # Stop arecord BEFORE yielding so STT can use the device
                                 _kill_proc(proc)
                                 if self._record_detections:
-                                    self._save_capture(ring, score)
+                                    self._save_capture(ring, raw_score, verifier_score)
                                 self.oww.reset()
-                                yield score
+                                yield effective_score
                                 detected = True
                                 break
 

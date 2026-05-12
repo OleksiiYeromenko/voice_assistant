@@ -5,9 +5,11 @@
 wake_word:
   # Pre-trained models: "hey_jarvis", "alexa", "hey_mycroft", "timer", etc.
   # Or path to custom .onnx model, e.g. "./models/my_wakeword.onnx"
-  model: "./models/hey_Poon-dyk_acc_0.82_recall_0.64_fp_1.33.onnx"
-  threshold: 0.5        # Detection confidence (0.0-1.0) — tune for your custom model
+  model: "./models/hey_Poon-dyk_acc_0.84_recall_0.69_fp_4.5.onnx"
+  threshold: 0.70       # Detection confidence (0.0-1.0) — applied to verifier score when enabled
   record_detections: true  # Save 3s pre-detection WAV to data/wake_captures/raw/ for FP collection
+  verifier_model: "./models/verifier.pkl"  # null to disable; train with scripts/train_verifier.py
+  verifier_threshold: 0.1  # Min raw OWW score to run verifier (gate to avoid unnecessary inference)
 
 # --- Speech-to-Text ---
 stt:

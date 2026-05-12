@@ -276,6 +276,13 @@ class AssistantFSM:
             self.memory.build_system_prompt(model_info=model_info) if self.memory else ""
         )
 
+        # Inject current radio station so the LLM can answer status questions
+        # and include the exact name in remember() calls.
+        from src.tools.player import get_radio_status
+        _radio = get_radio_status()
+        if _radio["active"] and _radio["station"]:
+            system_prompt += f"\n<radio_status>\nCurrently playing: {_radio['station']}\n</radio_status>"
+
         # LLM + Tools + TTS
         tools_used: set[str] = set()
         tool_delta: list[dict] = []
