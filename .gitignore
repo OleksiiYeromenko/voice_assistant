@@ -37,9 +37,6 @@ memory/USER.md
 # OS
 .DS_Store
 
-# Hardware-specific benchmark results
-bench_results.json
-
 # BMAD tooling artifacts
 skills-lock.json
 _bmad/

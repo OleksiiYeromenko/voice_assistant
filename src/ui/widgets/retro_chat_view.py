@@ -303,12 +303,14 @@ class RetroChatView(QWidget):
         self._blink_timer.stop()
 
     def _on_state_changed(self, state_name: str):
+        _prev = self._fsm_state
         self._fsm_state = state_name
         if state_name == "LISTENING":
             self._log.clear_log()
-            self._input_lbl.setText("RECORDING...")
+            self._cursor_lbl.setVisible(False)
             self._input_lbl.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _FZ_INPUT, 2))
-            self._cursor_lbl.setVisible(True)
+            self._blink = True
+            self._update_recording_label()
             self._blink_timer.start()
         elif state_name == "THINKING":
             self._cursor_lbl.setVisible(False)
@@ -317,10 +319,17 @@ class RetroChatView(QWidget):
         elif state_name == "IDLE":
             self._cursor_lbl.setVisible(False)
             self._blink_timer.stop()
-            if not self._input_lbl.text() or self._input_lbl.text() == "RECORDING...":
+            if not self._input_lbl.text() or _prev == "LISTENING":
                 self._input_lbl.setText("---")
                 self._input_lbl.setStyleSheet(_ss(T.RETRO_TEXT_MUTED, _FZ_INPUT, 1))
 
+    def _update_recording_label(self):
+        cursor_color = T.RETRO_ACCENT if self._blink else "transparent"
+        self._input_lbl.setText(f'RECORDING... <span style="color: {cursor_color};">█</span>')
+
     def _tick_blink(self):
         self._blink = not self._blink
-        self._cursor_lbl.setVisible(self._blink)
+        if self._fsm_state == "LISTENING":
+            self._update_recording_label()
+        else:
+            self._cursor_lbl.setVisible(self._blink)
