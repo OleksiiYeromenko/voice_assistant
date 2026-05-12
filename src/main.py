@@ -547,11 +547,11 @@ def assistant_loop(cfg: dict):
             ww_cfg = cfg["wake_word"]
             wake_detector = WakeWordDetector(
                 model=ww_cfg["model"],
-                threshold=ww_cfg["threshold"],
+                verifier_threshold=ww_cfg["verifier_threshold"],
                 alsa_device=stt_cfg.get("alsa_device"),
                 record_detections=ww_cfg.get("record_detections", False),
                 verifier_model=ww_cfg.get("verifier_model"),
-                verifier_threshold=ww_cfg.get("verifier_threshold", 0.1),
+                oww_threshold=ww_cfg.get("oww_threshold", 0.1),
             )
         except Exception as e:
             log.warning(f"Wake word not available: {e}. Using keyboard mode.")

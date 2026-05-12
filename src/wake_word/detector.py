@@ -46,11 +46,11 @@ class WakeWordDetector:
     def __init__(
         self,
         model: str = "hey_jarvis",
-        threshold: float = 0.7,
+        verifier_threshold: float = 0.7,
         alsa_device: str | None = None,
         record_detections: bool = False,
         verifier_model: str | None = None,
-        verifier_threshold: float = 0.1,
+        oww_threshold: float = 0.1,
     ):
         import pickle
 
@@ -63,17 +63,17 @@ class WakeWordDetector:
             openwakeword.utils.download_models()
 
         self.model_name = model
-        self.threshold = threshold
+        self.verifier_threshold = verifier_threshold
         self._alsa_device = alsa_device
         self.oww = Model(wakeword_models=[model])
         self._model_stem = Path(model).stem
         self._verifier = None
-        self._verifier_threshold = verifier_threshold
+        self._oww_threshold = oww_threshold
 
         if verifier_model:
             with open(verifier_model, "rb") as f:
                 self._verifier = pickle.load(f)
-            log.info(f"Verifier loaded: {verifier_model} (gate={verifier_threshold})")
+            log.info(f"Verifier loaded: {verifier_model} (gate={oww_threshold})")
 
         self._record_detections = record_detections
         if record_detections:
@@ -82,7 +82,7 @@ class WakeWordDetector:
                 (self._capture_dir / sub).mkdir(parents=True, exist_ok=True)
             log.info(f"Wake capture recording enabled → {self._capture_dir}")
 
-        log.info(f"Wake word detector ready: '{model}' (threshold={threshold})")
+        log.info(f"Wake word detector ready: '{model}' (verifier_threshold={verifier_threshold})")
 
     def _save_capture(self, ring: deque, raw_score: float, verifier_score: float | None = None) -> None:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -155,19 +155,24 @@ class WakeWordDetector:
                 for model_name, raw_score in prediction.items():
                     verifier_score = None
                     effective_score = raw_score
-                    if self._verifier and raw_score >= self._verifier_threshold:
+                    if self._verifier and raw_score >= self._oww_threshold:
                         features = self.oww.preprocessor.get_features(
                             self.oww.model_inputs[self._model_stem]
                         )
                         verifier_score = float(self._verifier.predict_proba(features)[0][-1])
                         effective_score = verifier_score
-                    if effective_score >= self.threshold:
+                    if effective_score >= self.verifier_threshold:
                         log.info(
                             f"Wake word interrupt '{model_name}': "
                             f"raw={raw_score:.3f} verifier={verifier_score}"
                         )
                         self.oww.reset()
                         return True
+                    elif verifier_score is not None:
+                        log.debug(
+                            f"Wake word REJECTED '{model_name}': "
+                            f"raw={raw_score:.3f} verifier={verifier_score:.3f}"
+                        )
             return False
         finally:
             _kill_proc(proc)
@@ -236,7 +241,7 @@ class WakeWordDetector:
                         for model_name, raw_score in prediction.items():
                             verifier_score = None
                             effective_score = raw_score
-                            if self._verifier and raw_score >= self._verifier_threshold:
+                            if self._verifier and raw_score >= self._oww_threshold:
                                 features = self.oww.preprocessor.get_features(
                                     self.oww.model_inputs[self._model_stem]
                                 )
@@ -244,7 +249,7 @@ class WakeWordDetector:
                                     self._verifier.predict_proba(features)[0][-1]
                                 )
                                 effective_score = verifier_score
-                            if effective_score >= self.threshold:
+                            if effective_score >= self.verifier_threshold:
                                 log.info(
                                     f"Wake word '{model_name}': "
                                     f"raw={raw_score:.3f} verifier={verifier_score}"
@@ -257,6 +262,11 @@ class WakeWordDetector:
                                 yield effective_score
                                 detected = True
                                 break
+                            elif verifier_score is not None:
+                                log.debug(
+                                    f"Wake word REJECTED '{model_name}': "
+                                    f"raw={raw_score:.3f} verifier={verifier_score:.3f}"
+                                )
 
                         if not detected and heartbeat_s > 0:
                             now = time.monotonic()

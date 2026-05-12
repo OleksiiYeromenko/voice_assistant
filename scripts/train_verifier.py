@@ -18,8 +18,8 @@ TP_DIR = Path("data/wake_captures/true_positives")
 FP_DIR = Path("data/wake_captures/false_positives")
 OUT = "models/verifier.pkl"
 
-tp = sorted(TP_DIR.glob("*.wav"))
-fp = sorted(FP_DIR.glob("*.wav"))
+tp = [str(p) for p in sorted(TP_DIR.glob("*.wav"))]
+fp = [str(p) for p in sorted(FP_DIR.glob("*.wav"))]
 
 if not tp:
     raise SystemExit(f"No positive examples found in {TP_DIR}")
