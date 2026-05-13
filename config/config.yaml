@@ -41,9 +41,9 @@ llm:
   # Fast local model — default for everyday queries
   local:
     model: "gemma4-e2b-q4km"   # Informational; echoed in backend.name (llama.cpp ignores it)
-    temperature: 0.7
+    temperature: 0.4
     num_ctx: 2048              # Set at llama-server startup (--ctx-size), kept for reference
-    num_predict: 150           # Max tokens per response — 150 ≈ 100-120 spoken words, enough for voice
+    num_predict: 256           # Max tokens per response — leaves room for tool call JSON + brief reply
     # num_thread: set at llama-server startup (-t flag), not passed via API
     think: false
     # System prompt is loaded from memory/PERSONA.md (human-editable, git-tracked)

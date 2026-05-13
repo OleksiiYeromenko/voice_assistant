@@ -424,6 +424,7 @@ def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_tim
                     "role": "user",
                     "content": (
                         "Summarize this conversation in one sentence. "
+                        "Include specific names (radio stations, recipes, people) that were mentioned or played. "
                         "Then on a second line, list 2-5 topic keywords separated by commas.\n"
                         "Format:\n"
                         "Summary: <one sentence>\n"
