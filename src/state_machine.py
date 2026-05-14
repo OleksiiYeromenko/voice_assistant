@@ -347,6 +347,7 @@ class AssistantFSM:
         # Metrics
         latency.total_ms = (time.perf_counter() - start) * 1000
         print(f"  📊 {latency.summary()}")
+        log.info(latency.summary())
 
         if self.ui_bus is not None:
             self._turn_count += 1

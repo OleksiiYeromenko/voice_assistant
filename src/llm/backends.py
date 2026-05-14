@@ -461,6 +461,8 @@ class LlamaCppBackend:
         tool_acc: dict[int, dict] = {}
 
         try:
+            t_start = time.perf_counter()
+            first_token_ms: float | None = None
             with httpx.Client(timeout=self._timeout) as client:
                 with client.stream(
                     "POST",
@@ -488,6 +490,8 @@ class LlamaCppBackend:
                         # Text tokens — emit immediately
                         content = delta.get("content")
                         if content:
+                            if first_token_ms is None:
+                                first_token_ms = (time.perf_counter() - t_start) * 1000
                             yield LLMChunk(text=content, model=self.name)
 
                         # Tool-call argument fragments — accumulate across chunks
@@ -514,6 +518,12 @@ class LlamaCppBackend:
                             yield LLMChunk(tool_calls=calls, model=self.name)
                             tool_acc = {}
 
+            total_ms = (time.perf_counter() - t_start) * 1000
+            log.info(
+                f"LlamaCpp: ttft={first_token_ms:.0f}ms total={total_ms:.0f}ms"
+                if first_token_ms is not None
+                else f"LlamaCpp: total={total_ms:.0f}ms (tool-call only, no text tokens)"
+            )
             yield LLMChunk(done=True, model=self.name)
         except Exception as e:
             log.error(f"LlamaCpp stream error: {e}")

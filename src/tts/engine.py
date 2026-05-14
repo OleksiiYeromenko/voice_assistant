@@ -362,8 +362,9 @@ class TTSEngine:
         # Speak any remaining text in buffer
         remaining = buffer.strip()
         if remaining:
-            log.debug(f"TTS remainder: '{remaining}'")
-            wav_data, _ = self.synthesize(remaining)
+            wav_data, synth_time = self.synthesize(remaining)
+            log.debug(f"TTS remainder {synth_time:.2f}s: '{remaining[:60]}'")
+
             if pre_proc is not None:
                 self._wait_for_pre(pre_proc)
                 pre_proc = None

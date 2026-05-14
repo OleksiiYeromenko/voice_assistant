@@ -349,6 +349,7 @@ def run_llm_with_tools(
         full_response = text_buffer.strip()
 
     if full_response:
+        log.info(f"Response: {full_response[:500]}")
         messages.append({"role": "assistant", "content": full_response})
     return full_response, tools_used, messages[initial_len:]
 
@@ -363,6 +364,7 @@ def _summarize_in_background(backend, messages, memory, session_id):
     Writes summary + topics back to the (already-closed) session record.
     """
     raw_text = ""
+    t0 = time.perf_counter()
     try:
         for chunk in backend.stream(
             messages,
@@ -385,6 +387,10 @@ def _summarize_in_background(backend, messages, memory, session_id):
                 summary_line = raw_text.strip().splitlines()[0].strip()
 
             memory.update_session_summary(session_id, summary_line, topics_line)
+            elapsed = time.perf_counter() - t0
+            log.info(
+                f"Session {session_id} summary ({elapsed:.1f}s) [{backend.name}]: {summary_line[:120]}"
+            )
             if topics_line:
                 log.info(f"Session topics: {topics_line}")
     except Exception as e:
@@ -581,6 +587,21 @@ def assistant_loop(cfg: dict):
         fsm.run()
 
 
+class _DedupeFilter(logging.Filter):
+    """Let the first occurrence of each unique message through; drop repeats."""
+
+    def __init__(self):
+        super().__init__()
+        self._seen: set[str] = set()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        key = f"{record.name}:{record.getMessage()}"
+        if key in self._seen:
+            return False
+        self._seen.add(key)
+        return True
+
+
 def _setup_logging():
     log_dir = Path(__file__).resolve().parent.parent / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -613,6 +634,10 @@ def _setup_logging():
     root.handlers.clear()
     root.addHandler(console)
     root.addHandler(file_handler)
+
+    # Suppress repeated identical warnings from third-party libraries
+    # (e.g. openwakeword's "tflite not found, switching to onnxruntime" on every load)
+    logging.getLogger("openwakeword").addFilter(_DedupeFilter())
 
 
 def main():
