@@ -125,17 +125,19 @@ def play_radio(query: str) -> str:
     if not query:
         return "I need a station name or genre to play."
 
+    query = _normalize_spelled_letters(query)
     want_random, country_code, genre = _parse_radio_query(query)
     search_limit = 10 if want_random else _search_limit
-    name_query = re.sub(r'\brandom\b', '', query, flags=re.I).strip()
 
     try:
-        stations = _search_radio_browser(
-            genre or name_query,
-            country_code=country_code,
-            name_fallback=name_query,
-            limit=search_limit,
-        )
+        if want_random and not genre:
+            stations = _get_popular_stations(country_code=country_code)
+        else:
+            stations = _search_radio_browser(
+                genre,
+                country_code=country_code,
+                limit=search_limit,
+            )
     except Exception as e:
         log.error(f"Radio Browser search failed: {e}")
         return f"Couldn't reach the radio directory: {e}"
@@ -290,6 +292,18 @@ def _clamp_volume(v) -> int:
     return max(0, min(100, v))
 
 
+def _normalize_spelled_letters(text: str) -> str:
+    """Collapse STT-spelled station names: K-I-S-S-F-M → KISS FM, W-N-Y-C → WNYC."""
+    def collapse(m: re.Match) -> str:
+        raw = m.group(0).replace('-', '')
+        for suffix in ('FM', 'AM'):
+            if raw.endswith(suffix) and len(raw) > len(suffix):
+                return raw[: -len(suffix)] + ' ' + suffix
+        return raw
+
+    return re.sub(r'\b[A-Z](?:-[A-Z]){2,}\b', collapse, text)
+
+
 def _parse_radio_query(query: str) -> tuple[bool, str | None, str]:
     """Extract (want_random, country_code, genre) from a free-text query."""
     want_random = bool(re.search(r'\brandom\b', query, re.I))
@@ -306,18 +320,36 @@ def _parse_radio_query(query: str) -> tuple[bool, str | None, str]:
             remaining.append(word)
 
     genre = " ".join(remaining)
-    genre = re.sub(r'\b(radio|station|from|in|the|a|an|some|music)\b', '', genre, flags=re.I)
+    genre = re.sub(
+        r'\b(radio|station|from|in|the|a|an|some|music|play|just|please|and|hey)\b',
+        '',
+        genre,
+        flags=re.I,
+    )
+    genre = re.sub(r'[^\w\s]', ' ', genre)
     genre = re.sub(r'\s+', ' ', genre).strip()
     return want_random, country_code, genre
+
+
+def _get_popular_stations(country_code: str | None = None, limit: int = 50) -> list[dict]:
+    """Return top popular stations from Radio Browser with no genre filter."""
+    headers = {"User-Agent": "voice-assistant/0.1 (+radio-playback)"}
+    params: dict = {"hidebroken": "true", "limit": str(limit)}
+    if country_code:
+        params["countrycode"] = country_code
+    url = f"{_radio_browser_base.rstrip('/')}/json/stations/topclick"
+    r = httpx.get(url, params=params, headers=headers, timeout=_request_timeout_s)
+    r.raise_for_status()
+    data = r.json()
+    return data if isinstance(data, list) else []
 
 
 def _search_radio_browser(
     query: str,
     country_code: str | None = None,
-    name_fallback: str | None = None,
     limit: int | None = None,
 ) -> list[dict]:
-    """Cascade search: country+tag → tag → name. Returns best-first list."""
+    """4-tier cascade: tag+country → tag → name+country → name. Returns best-first list."""
     params_common = {
         "hidebroken": "true",
         "order": "clickcount",
@@ -345,9 +377,13 @@ def _search_radio_browser(
         if results:
             return results
 
-    fallback = name_fallback or query
-    if fallback:
-        return _get({"name": fallback})
+    if query and country_code:
+        results = _get({"name": query, "countrycode": country_code})
+        if results:
+            return results
+
+    if query:
+        return _get({"name": query})
 
     return []
 

@@ -195,8 +195,9 @@ PLAY_RADIO_TOOL = {
             "(e.g. 'rock', 'jazz', 'classical'), optionally prefixed with "
             "'random' for a random pick (e.g. 'random jazz') and/or a country "
             "(e.g. 'rock Ukraine', 'random pop France'). For a specific station "
-            "pass its name (e.g. 'BBC Radio 1'). When the user says 'play some "
-            "radio' with no genre, use their saved favorite station name. "
+            "pass its name, optionally with country (e.g. 'BBC Radio 1', 'KISS FM Spain'). "
+            "When the user says 'play some radio' with no genre, use their saved favorite "
+            "station name. "
             "Do NOT call when the user asks what is currently playing — "
             "answer from <radio_status> context instead."
         ),
@@ -206,7 +207,7 @@ PLAY_RADIO_TOOL = {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Genre keyword optionally with 'random' and/or country (e.g. 'random rock Ukraine'). For a specific station use its name.",  # noqa: E501
+                    "description": "Genre keyword optionally with 'random' and/or country (e.g. 'random rock Ukraine'). For a specific station use its name, optionally with country (e.g. 'KISS FM Spain').",  # noqa: E501
                 },
             },
         },
