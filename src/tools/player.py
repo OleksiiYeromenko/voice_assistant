@@ -130,7 +130,7 @@ def play_radio(query: str) -> str:
     search_limit = 10 if want_random else _search_limit
 
     try:
-        if want_random and not genre:
+        if not genre:
             stations = _get_popular_stations(country_code=country_code)
         else:
             stations = _search_radio_browser(
@@ -145,7 +145,12 @@ def play_radio(query: str) -> str:
     if not stations:
         return f"No stations found for '{query}'."
 
-    chosen = random.choice(stations) if want_random else stations[0]
+    if country_code:
+        filtered = [s for s in stations if s.get("countrycode", "").upper() == country_code]
+        if filtered:
+            stations = filtered
+
+    chosen = random.choice(stations) if (want_random or not genre) else stations[0]
     url = chosen.get("url_resolved") or chosen.get("url")
     name = chosen.get("name", "").strip() or query
     if not url:
