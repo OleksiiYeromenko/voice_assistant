@@ -9,6 +9,7 @@ import inspect
 import logging
 from typing import Any
 
+from src.tools.http_utils import http_get, http_post
 from src.tools.player import play_radio, set_volume, stop_playback
 from src.tools.recipes import GET_RECIPE_TOOL, get_recipe
 from src.tools.timers import cancel_timer, set_timer
@@ -262,7 +263,7 @@ ALL_TOOLS = [
 # Tools whose results go stale immediately (e.g., time changes every minute).
 # Responses using these tools are replaced with placeholders in conversation
 # history so the LLM doesn't parrot old values on subsequent calls.
-VOLATILE_TOOLS: set[str] = {"get_time"}
+VOLATILE_TOOLS: set[str] = {"get_time", "get_weather", "get_shopping_list"}
 
 
 # ---------------------------------------------------------------------------
@@ -277,11 +278,9 @@ def get_weather(city: str, forecast_days: int = 0) -> str:
     forecast_days=1  → tomorrow
     forecast_days=N  → next N days starting tomorrow (max 7)
     """
-    import httpx
-
     try:
         # Step 1: Geocode city name
-        geo = httpx.get(
+        geo = http_get(
             "https://geocoding-api.open-meteo.com/v1/search",
             params={"name": city, "count": 1},
             timeout=5,
@@ -296,7 +295,7 @@ def get_weather(city: str, forecast_days: int = 0) -> str:
 
         if forecast_days <= 0:
             # Current conditions
-            weather = httpx.get(
+            weather = http_get(
                 "https://api.open-meteo.com/v1/forecast",
                 params={
                     "latitude": lat,
@@ -318,7 +317,7 @@ def get_weather(city: str, forecast_days: int = 0) -> str:
         else:
             # Daily forecast — request N+1 days so index 0 (today) can be skipped
             days_capped = min(forecast_days, 7)
-            weather = httpx.get(
+            weather = http_get(
                 "https://api.open-meteo.com/v1/forecast",
                 params={
                     "latitude": lat,
@@ -378,10 +377,8 @@ def get_time(location: str = "") -> str:
         pass
 
     # Fall back to geocoding (same API as weather) to resolve city → timezone
-    import httpx
-
     try:
-        geo = httpx.get(
+        geo = http_get(
             "https://geocoding-api.open-meteo.com/v1/search",
             params={"name": location.strip(), "count": 1},
             timeout=5,
@@ -459,8 +456,6 @@ def get_shopping_list() -> str:
     """Return all open tasks in the Todoist shopping list project."""
     import os
 
-    import httpx
-
     if not os.getenv("TODOIST_API_TOKEN"):
         return (
             "ERROR: TODOIST_API_TOKEN is not configured."
@@ -470,8 +465,7 @@ def get_shopping_list() -> str:
     try:
         project_id = _todoist_project_id()
         params = {"project_id": project_id} if project_id else {}
-        r = httpx.get(f"{_TODOIST_API}/tasks", headers=_todoist_headers(), params=params, timeout=8)
-        r.raise_for_status()
+        r = http_get(f"{_TODOIST_API}/tasks", headers=_todoist_headers(), params=params, timeout=8)
         body = r.json()
         tasks = body.get("results", body) if isinstance(body, dict) else body
         if not tasks:
@@ -488,10 +482,8 @@ def get_shopping_list() -> str:
 
 
 def add_to_shopping_list(item: str) -> str:
-    """Add item to Todoist shopping list, with one retry on transient failure."""
+    """Add item to Todoist shopping list."""
     import os
-
-    import httpx
 
     if not os.getenv("TODOIST_API_TOKEN"):
         return (
@@ -504,27 +496,16 @@ def add_to_shopping_list(item: str) -> str:
     if project_id:
         payload["project_id"] = project_id
 
-    last_err: Exception | None = None
-    for attempt in (1, 2):
-        try:
-            r = httpx.post(
-                f"{_TODOIST_API}/tasks",
-                headers=_todoist_headers(),
-                json=payload,
-                timeout=3,
-            )
-            r.raise_for_status()
-            log.info(f"Added to Todoist: {item}")
-            return f"Added '{item}' to the shopping list."
-        except Exception as e:
-            last_err = e
-            log.warning(f"Todoist add attempt {attempt} failed: {e}")
-
-    log.error(f"Todoist add failed after retry: {last_err}")
-    return (
-        f"ERROR: Could not add '{item}' to shopping list: {last_err}."
-        " Tell the user the item was NOT saved."
-    )
+    try:
+        http_post(f"{_TODOIST_API}/tasks", headers=_todoist_headers(), json=payload, timeout=3)
+        log.info(f"Added to Todoist: {item}")
+        return f"Added '{item}' to the shopping list."
+    except Exception as e:
+        log.error(f"Todoist add failed: {e}")
+        return (
+            f"ERROR: Could not add '{item}' to shopping list: {e}."
+            " Tell the user the item was NOT saved."
+        )
 
 
 # ---------------------------------------------------------------------------

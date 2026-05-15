@@ -21,7 +21,7 @@ import subprocess
 import threading
 import time
 
-import httpx
+from src.tools.http_utils import http_get
 
 log = logging.getLogger(__name__)
 
@@ -338,8 +338,7 @@ def _get_popular_stations(country_code: str | None = None, limit: int = 50) -> l
     if country_code:
         params["countrycode"] = country_code
     url = f"{_radio_browser_base.rstrip('/')}/json/stations/topclick"
-    r = httpx.get(url, params=params, headers=headers, timeout=_request_timeout_s)
-    r.raise_for_status()
+    r = http_get(url, params=params, headers=headers, timeout=_request_timeout_s)
     data = r.json()
     return data if isinstance(data, list) else []
 
@@ -360,10 +359,9 @@ def _search_radio_browser(
 
     def _get(extra: dict) -> list[dict]:
         url = f"{_radio_browser_base.rstrip('/')}/json/stations/search"
-        r = httpx.get(
+        r = http_get(
             url, params={**params_common, **extra}, headers=headers, timeout=_request_timeout_s
         )
-        r.raise_for_status()
         data = r.json()
         return data if isinstance(data, list) else []
 

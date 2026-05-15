@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Any
 
-import httpx
+from src.tools.http_utils import http_get, http_post
 
 log = logging.getLogger(__name__)
 
@@ -55,22 +55,23 @@ def _all_blocks(page_id: str) -> list[dict]:
     """Fetch all child blocks for a Notion page, following pagination cursors."""
     blocks: list[dict] = []
     cursor: str | None = None
-    with httpx.Client(timeout=12) as client:
-        while True:
-            params: dict[str, Any] = {"page_size": 100}
-            if cursor:
-                params["start_cursor"] = cursor
-            r = client.get(
-                f"{_NOTION_API}/blocks/{page_id}/children",
-                headers=_notion_headers(),
-                params=params,
-            )
-            r.raise_for_status()
-            body = r.json()
-            blocks.extend(body.get("results", []))
-            if not body.get("has_more"):
-                break
-            cursor = body.get("next_cursor")
+    while True:
+        params: dict[str, Any] = {"page_size": 100}
+        if cursor:
+            params["start_cursor"] = cursor
+        r = http_get(
+            f"{_NOTION_API}/blocks/{page_id}/children",
+            headers=_notion_headers(),
+            params=params,
+            timeout=12,
+            retries=3,
+            backoff=(1.0, 2.0),
+        )
+        body = r.json()
+        blocks.extend(body.get("results", []))
+        if not body.get("has_more"):
+            break
+        cursor = body.get("next_cursor")
     return blocks
 
 
@@ -119,17 +120,18 @@ def get_recipe(recipe_name: str) -> str:
         )
 
     try:
-        with httpx.Client(timeout=10) as client:
-            r = client.post(
-                f"{_NOTION_API}/databases/{db_id}/query",
-                headers=_notion_headers(),
-                json={
-                    "filter": {"property": "Title EN", "rich_text": {"contains": recipe_name}},
-                    "page_size": 1,
-                },
-            )
-            r.raise_for_status()
-            results = r.json().get("results", [])
+        r = http_post(
+            f"{_NOTION_API}/databases/{db_id}/query",
+            headers=_notion_headers(),
+            json={
+                "filter": {"property": "Title EN", "rich_text": {"contains": recipe_name}},
+                "page_size": 1,
+            },
+            timeout=10,
+            retries=3,
+            backoff=(1.0, 2.0),
+        )
+        results = r.json().get("results", [])
 
         if not results:
             return f"Recipe '{recipe_name}' not found in the Recipe Library."
