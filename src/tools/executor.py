@@ -568,6 +568,8 @@ def _format_day(code, high, low, precip, wind) -> str:
         parts.append(f"wind up to {float(wind):.0f} km/h")
     if precip and float(precip) > 0:
         parts.append(f"{float(precip):.1f}mm rain")
+    else:
+        parts.append("no rain")
     return ", ".join(parts)
 
 
