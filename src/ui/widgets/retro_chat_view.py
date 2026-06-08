@@ -101,6 +101,7 @@ class RetroConversationLog(QScrollArea):
 
         self._thinking_lbl: QLabel | None = None
         self._tool_rows: dict[str, RetroToolRow] = {}
+        self._all_tool_rows: list[RetroToolRow] = []  # tracks every row for cleanup
         self._divider: QFrame | None = None
         self._resp_section: QWidget | None = None
         self._resp_lbl: QLabel | None = None
@@ -128,6 +129,7 @@ class RetroConversationLog(QScrollArea):
         self._remove_thinking()
         row = RetroToolRow(name)
         self._tool_rows[name] = row
+        self._all_tool_rows.append(row)
         self._lay.addWidget(row)
         self._scroll_to_bottom()
 
@@ -186,9 +188,10 @@ class RetroConversationLog(QScrollArea):
 
     def clear_log(self):
         self._remove_thinking()
-        for row in list(self._tool_rows.values()):
+        for row in list(self._all_tool_rows):
             row.setParent(None)
             row.deleteLater()
+        self._all_tool_rows.clear()
         self._tool_rows.clear()
         if self._divider:
             self._divider.setParent(None)
