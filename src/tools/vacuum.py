@@ -2,7 +2,7 @@
 
 import logging
 
-from src.tools.http_utils import http_post
+from src.tools.http_utils import http_put
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def start_vacuum() -> str:
             " Tell the user the vacuum is unavailable."
         )
     try:
-        http_post(
+        http_put(
             f"http://{_vacuum_ip}/api/v2/robot/capabilities/BasicControlCapability",
             json={"action": "start"},
             timeout=5,
