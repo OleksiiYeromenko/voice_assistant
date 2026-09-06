@@ -13,6 +13,7 @@ from src.tools.http_utils import http_get, http_post
 from src.tools.player import play_radio, set_volume, stop_playback
 from src.tools.recipes import GET_RECIPE_TOOL, get_recipe
 from src.tools.timers import cancel_timer, set_timer
+from src.tools.vacuum import start_vacuum
 
 log = logging.getLogger(__name__)
 
@@ -242,6 +243,14 @@ SET_VOLUME_TOOL = {
     },
 }
 
+START_VACUUM_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "start_vacuum",
+        "description": "Start the robot vacuum cleaner to clean the house.",
+        "parameters": {"type": "object", "required": [], "properties": {}},
+    },
+}
 
 # All available tool schemas
 ALL_TOOLS = [
@@ -258,6 +267,7 @@ ALL_TOOLS = [
     STOP_PLAYBACK_TOOL,
     SET_VOLUME_TOOL,
     GET_RECIPE_TOOL,
+    START_VACUUM_TOOL,
 ]
 
 # Tools whose results go stale immediately (e.g., time changes every minute).
@@ -524,6 +534,7 @@ _TOOL_FUNCTIONS: dict[str, callable] = {
     "stop_radio": stop_playback,
     "set_volume": set_volume,
     "get_recipe": get_recipe,
+    "start_vacuum": start_vacuum,
 }
 
 
