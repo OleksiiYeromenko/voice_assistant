@@ -29,6 +29,7 @@ from src.stt.engine import STTEngine
 from src.tools.executor import execute_tool, register_tool
 from src.tools.player import init_player
 from src.tools.timers import register_alert_callback
+from src.tools.vacuum import init_vacuum
 from src.tts.engine import TTSEngine
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ ACTION_TOOLS: frozenset[str] = frozenset({
     "cancel_timer",
     "add_to_shopping_list",
     "remember",
+    "start_vacuum",
 })
 
 
@@ -489,6 +491,7 @@ def assistant_loop(cfg: dict):
 
     register_alert_callback(tts.speak)
     init_player(cfg)
+    init_vacuum(cfg)
 
     backends = build_backends(cfg)
 
