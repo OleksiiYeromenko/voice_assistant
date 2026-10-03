@@ -7,6 +7,7 @@ called by the FSM state handlers.
 
 import logging
 import sys
+import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -53,6 +54,12 @@ ACTION_TOOLS: frozenset[str] = frozenset({
     "remember",
     "start_vacuum",
 })
+
+
+def model_info_line(backend, backend_key: str) -> str:
+    """The <current_model> text put in the system prompt. Single source of truth: the
+    startup cache priming must build the exact same prompt the state machine sends."""
+    return f"You are running as: {backend.name} (backend: {backend_key})"
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +505,7 @@ def assistant_loop(cfg: dict):
         sounds_dir=cfg["tts"].get("sounds_dir", "./sounds"),
         volume=int(cfg["tts"].get("volume", 80)),
     )
+    tts.load_voice()  # keep Piper loaded in-process: no per-sentence voice reload
 
     register_alert_callback(tts.speak)
     init_player(cfg)
@@ -555,6 +563,23 @@ def assistant_loop(cfg: dict):
     memory.close_stale_sessions()
     register_tool("remember", lambda fact: memory.remember(fact))
     register_tool("recall", lambda query="": memory.recall(query))
+
+    # Prime the local llama.cpp KV cache in the background (can take ~a minute on the
+    # Pi) so the first real question doesn't pay for processing the system prompt +
+    # tools. Also logs how full the context window is.
+    local_backend = backends.get("local")
+    if isinstance(local_backend, LlamaCppBackend):
+        from src.tools.executor import ALL_TOOLS
+
+        threading.Thread(
+            target=local_backend.prime_cache,
+            args=(
+                memory.build_system_prompt(model_info=model_info_line(local_backend, "local")),
+                ALL_TOOLS,
+            ),
+            daemon=True,
+            name="prime-local-cache",
+        ).start()
 
     # Wake word detector (optional)
     wake_detector = None

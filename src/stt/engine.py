@@ -67,13 +67,21 @@ class STTEngine:
         max_duration_s: float = 10.0,
         silence_timeout_s: float = 1.5,
         silence_threshold: int = 500,
+        initial_silence_timeout_s: float = 4.0,
     ) -> np.ndarray:
-        """Record from mic until silence is detected. Returns int16 numpy array at 16 kHz."""
+        """Record from mic until the speaker stops. Returns int16 numpy array at 16 kHz.
+
+        ``silence_timeout_s`` is the quiet time that ends an utterance *after speech
+        has started*, so it can be short without cutting off a slow start.
+        ``initial_silence_timeout_s`` is how long to wait for speech to begin at all.
+        """
         self._ensure_alsa_device()
 
         frames: list[bytes] = []
         silent_chunks = 0
+        speech_started = False
         max_silent_chunks = int(RATE / CHUNK_SAMPLES * silence_timeout_s)
+        max_initial_chunks = int(RATE / CHUNK_SAMPLES * initial_silence_timeout_s)
         max_chunks = int(RATE / CHUNK_SAMPLES * max_duration_s)
 
         log.info(f"Recording at {RATE} Hz via {self._alsa_device} ...")
@@ -92,10 +100,12 @@ class STTEngine:
 
                 if energy < silence_threshold:
                     silent_chunks += 1
-                    if silent_chunks >= max_silent_chunks:
+                    limit = max_silent_chunks if speech_started else max_initial_chunks
+                    if silent_chunks >= limit:
                         log.info("Silence detected, stopping recording.")
                         break
                 else:
+                    speech_started = True
                     silent_chunks = 0
 
         audio = np.frombuffer(b"".join(frames), dtype=np.int16)
@@ -128,12 +138,14 @@ class STTEngine:
         self,
         max_duration_s: float = 10.0,
         silence_timeout_s: float = 1.5,
+        initial_silence_timeout_s: float = 4.0,
     ) -> tuple[str, float, float]:
         """Convenience: record then transcribe. Returns (text, record_time, transcribe_time)."""
         t0 = time.perf_counter()
         audio = self.record_utterance(
             max_duration_s=max_duration_s,
             silence_timeout_s=silence_timeout_s,
+            initial_silence_timeout_s=initial_silence_timeout_s,
         )
         record_time = time.perf_counter() - t0
 

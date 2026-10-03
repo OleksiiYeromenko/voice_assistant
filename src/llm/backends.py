@@ -419,14 +419,15 @@ class LlamaCppBackend:
 
         return normalized
 
-    def stream(
+    def _build_payload(
         self,
         messages: list[dict],
-        tools: list[dict] | None = None,
-        system: str | None = None,
-    ) -> Generator[LLMChunk, None, None]:
-        import httpx
-
+        tools: list[dict] | None,
+        system: str | None,
+        stream: bool = True,
+    ) -> dict[str, Any]:
+        """Request body for /v1/chat/completions. Shared by stream() and prime_cache()
+        so both send an identical prompt prefix (a requirement for KV-cache reuse)."""
         sys_prompt = system or self._system_prompt
         full_messages: list[dict] = []
         if sys_prompt:
@@ -436,7 +437,7 @@ class LlamaCppBackend:
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": full_messages,
-            "stream": True,
+            "stream": stream,
             "temperature": self._temperature,
             # Disable thinking mode for Gemma 4 (and other thinking-capable models).
             # The Jinja template checks `enable_thinking` to inject <|think|>;
@@ -456,6 +457,78 @@ class LlamaCppBackend:
             payload["max_tokens"] = self._num_predict
         if tools:
             payload["tools"] = tools
+        return payload
+
+    def prime_cache(self, system: str, tools: list[dict]) -> None:
+        """Pre-fill the server's KV cache with the real system prompt + tool list.
+
+        Without this the first real question pays the full prompt-processing cost
+        (~70 s on a Pi 5 per the note in stream()). Sends a 1-token request with the
+        same prefix stream() will use, so later requests only process new messages.
+        Also reports how much of the context window the fixed prompt uses, because a
+        prompt that nearly fills --ctx-size leaves no room for the conversation.
+        Never raises: this is an optimisation, not a requirement.
+        """
+        import httpx
+
+        try:
+            n_ctx = None
+            try:
+                props = httpx.get(f"{self._base_url}/props", timeout=5).json()
+                n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx") or props.get(
+                    "n_ctx"
+                )
+            except Exception:
+                pass  # older builds / no /props — fall back to usage numbers only
+
+            payload = self._build_payload(
+                [{"role": "user", "content": "hi"}], tools, system, stream=False
+            )
+            payload["max_tokens"] = 1
+            start = time.perf_counter()
+            resp = httpx.post(
+                f"{self._base_url}/v1/chat/completions", json=payload, timeout=self._timeout
+            )
+            if resp.status_code == 400 and "context" in resp.text.lower():
+                log.error(
+                    "llama.cpp rejected the system prompt + tools as larger than its context "
+                    f"window (n_ctx={n_ctx}). Restart llama-server with a bigger --ctx-size "
+                    f"(4096 recommended): {resp.text[:200]}"
+                )
+                return
+            resp.raise_for_status()
+            elapsed = time.perf_counter() - start
+            prompt_tokens = (resp.json().get("usage") or {}).get("prompt_tokens")
+            log.info(
+                f"Local prompt cache primed in {elapsed:.1f}s "
+                f"({prompt_tokens} prompt tokens, n_ctx={n_ctx})"
+            )
+            if prompt_tokens and n_ctx:
+                budget = n_ctx - (self._num_predict or 0)
+                if prompt_tokens >= budget:
+                    log.error(
+                        f"Fixed prompt ({prompt_tokens} tokens) leaves no room in the "
+                        f"{n_ctx}-token context window for conversation + reply. "
+                        "Raise llama-server --ctx-size "
+                        "(4096 recommended) or shorten memory/PERSONA.md / the tool list."
+                    )
+                elif prompt_tokens > 0.6 * n_ctx:
+                    log.warning(
+                        f"Fixed prompt uses {prompt_tokens}/{n_ctx} tokens of context; "
+                        "long conversations will be truncated. Consider --ctx-size 4096."
+                    )
+        except Exception as e:
+            log.warning(f"Local prompt-cache priming skipped: {e}")
+
+    def stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        system: str | None = None,
+    ) -> Generator[LLMChunk, None, None]:
+        import httpx
+
+        payload = self._build_payload(messages, tools, system)
 
         # index → {name, args_str} — accumulate streamed tool-call fragments
         tool_acc: dict[int, dict] = {}

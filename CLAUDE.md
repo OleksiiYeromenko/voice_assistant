@@ -76,7 +76,7 @@ Router priority: explicit user trigger ("use claude") → session preference →
 
 ### Streaming TTS (`src/tts/engine.py`)
 
-Buffers LLM tokens until a sentence boundary, then synthesizes via Piper and pipes directly to `aplay` (no disk writes). This allows audio playback to start before the LLM finishes generating.
+Buffers LLM tokens until a sentence boundary, then synthesizes via an in-process Piper voice (loaded once at startup by `TTSEngine.load_voice()`; falls back to the `piper` CLI if that fails) and pipes directly to `aplay`. This allows audio playback to start before the LLM finishes generating.
 
 ### Tool Calling (`src/tools/executor.py`)
 

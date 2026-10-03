@@ -205,6 +205,7 @@ class AssistantFSM:
         with Timer() as stt_timer:
             text, rec_time, trans_time = self.stt.record_and_transcribe(
                 silence_timeout_s=self.cfg["stt"]["silence_timeout_s"],
+                initial_silence_timeout_s=self.cfg["stt"].get("initial_silence_timeout_s", 4.0),
             )
         latency.stt_ms = stt_timer.elapsed_ms
 
@@ -223,7 +224,7 @@ class AssistantFSM:
     def _state_thinking(self, ctx: dict) -> tuple[State, dict]:
         """Route, run LLM with tools, stream TTS."""
         from src.llm.backends import LlamaCppBackend, OllamaBackend
-        from src.main import run_llm_with_tools
+        from src.main import model_info_line, run_llm_with_tools
         from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
         from src.tools.executor import ALL_TOOLS, VOLATILE_TOOLS
 
@@ -281,7 +282,7 @@ class AssistantFSM:
         recent = self.conversation[-6:]
 
         # Tell the model which backend it's running on
-        model_info = f"You are running as: {backend.name} (backend: {decision.backend_key})"
+        model_info = model_info_line(backend, decision.backend_key)
         system_prompt = (
             self.memory.build_system_prompt(model_info=model_info) if self.memory else ""
         )
