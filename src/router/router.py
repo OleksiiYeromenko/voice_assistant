@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 class RouteDecision:
     backend_key: str   # "remote", "local", "claude", "gemini"
     reason: str        # Why this backend was chosen
-    cleaned_text: str  # User text with trigger phrase removed
+    cleaned_text: str  # User text with trigger phrase removed; "" for a bare switch command
     is_explicit: bool  # True when a trigger phrase matched this turn
 
 
@@ -43,6 +43,7 @@ class ModelRouter:
         # 1. Explicit trigger phrase
         for key, patterns in self.triggers.items():
             for pattern in patterns:
+                pattern = pattern.lower()  # input is lowercased; config may use "GPU"
                 if pattern in text_lower:
                     cleaned = re.sub(re.escape(pattern), "", text_lower, count=1).strip()
                     # Residual noise ≤3 chars (e.g. "GPU" from "switch to remote GPU")
@@ -56,7 +57,7 @@ class ModelRouter:
                         return RouteDecision(
                             backend_key=default,
                             reason=f"explicit trigger: '{pattern}' → auto ({default})",
-                            cleaned_text=cleaned or text,
+                            cleaned_text=cleaned,
                             is_explicit=True,
                         )
 
@@ -65,7 +66,7 @@ class ModelRouter:
                     return RouteDecision(
                         backend_key=key,
                         reason=f"explicit trigger: '{pattern}'",
-                        cleaned_text=cleaned or text,
+                        cleaned_text=cleaned,
                         is_explicit=True,
                     )
 
