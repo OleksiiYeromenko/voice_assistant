@@ -89,7 +89,7 @@ Available tools: `get_weather`, `web_search`, `get_time`, `add_to_shopping_list`
 
 ## Configuration
 
-Primary config: `config/config.yaml`. All keys can be overridden with `VA_`-prefixed environment variables (e.g., `VA_STT_MODEL=tiny.en`, `VA_LLM_LOCAL_MODEL=qwen3:1.7b`, `VA_WAKE_WORD_THRESHOLD=0.6`).
+Primary config: `config/config.yaml`. All keys can be overridden with `VA_`-prefixed environment variables (e.g., `VA_STT_MODEL=tiny.en`, `VA_LLM_LOCAL_MODEL=qwen3:1.7b`, `VA_WAKE_WORD_VERIFIER_THRESHOLD=0.7`).
 
 API keys go in `.env` (gitignored): `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`.
 

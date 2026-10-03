@@ -92,16 +92,24 @@ class AssistantFSM:
 
         log.info(f"FSM started (input_mode={self.input_mode.name})")
 
+        from src.tools.player import resume
+
         try:
             while state != State.SHUTDOWN:
                 handler = self._handlers[state]
                 prev = state
                 state, ctx = handler(ctx)
+                if state == State.IDLE and prev != State.IDLE:
+                    # Wake-word trigger pauses the radio; whichever way the turn ended
+                    # (no speech, switch command, normal reply) restart it. No-op if
+                    # nothing was paused.
+                    resume()
                 if state != prev:
                     log.info(f"State: {prev.name} → {state.name}")
                     if self.ui_bus is not None:
                         self.ui_bus.state_changed.emit(state.name)
         finally:
+            resume()  # an exception mid-turn must not leave the radio paused
             self.memory.close_session(self.session_id)
             log.info("Session closed on shutdown.")
 
@@ -243,7 +251,9 @@ class AssistantFSM:
         # Skip the LLM entirely and just confirm verbally.
         if decision.is_explicit and not decision.cleaned_text.strip():
             if thinking_proc is not None:
-                thinking_proc.terminate()
+                # _DelayedSound is cancel()-able, a plain Popen is terminate()-able
+                stop = getattr(thinking_proc, "cancel", None) or thinking_proc.terminate
+                stop()
             confirm = f"Switched to {decision.backend_key}."
             self._speak_with_ui(confirm)
             self.last_interaction_time = time.time()
