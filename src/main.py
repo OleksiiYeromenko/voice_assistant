@@ -37,6 +37,11 @@ log = logging.getLogger(__name__)
 # Max tool-call rounds to prevent infinite loops
 MAX_TOOL_ROUNDS = 2
 
+# Lookup tools whose result is meant to feed another tool call (e.g. recall the
+# favourite station, then play_radio it). Tools stay offered on the next round
+# after these; after any other tool they are withheld (see run_llm_with_tools).
+CHAINING_TOOLS: frozenset[str] = frozenset({"recall"})
+
 # Tools that don't need a second LLM call — the tool result is spoken directly.
 # Query tools (get_weather, web_search, recall, etc.) still go through LLM synthesis.
 ACTION_TOOLS: frozenset[str] = frozenset({
@@ -199,6 +204,7 @@ def run_llm_with_tools(
     """
     full_response = ""
     tools_used: set[str] = set()
+    last_round_tools: set[str] = set()
     initial_len = len(messages)
 
     for round_num in range(MAX_TOOL_ROUNDS):
@@ -208,8 +214,11 @@ def run_llm_with_tools(
 
         # After tool calls have been made, don't send tools again — the model
         # only needs to produce a spoken confirmation, and omitting tools prevents
-        # it returning a degenerate empty response instead of text.
-        stream_tools = tools if not tools_used else None
+        # it returning a degenerate empty response instead of text. Exception: after
+        # a lookup tool (CHAINING_TOOLS) the model may need one more call to act on
+        # the result. If that uses up the last round, the forced text-only call
+        # below still produces the spoken reply.
+        stream_tools = tools if last_round_tools <= CHAINING_TOOLS else None
 
         token_gen = _create_token_gen(
             backend,
@@ -261,6 +270,7 @@ def run_llm_with_tools(
                 }
             )
 
+            last_round_tools = {tc.name for tc in tool_calls}
             for tc in tool_calls:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
                 tools_used.add(tc.name)
