@@ -18,6 +18,9 @@ RATE = 16000  # arecord records at 16 kHz via plughw
 CHANNELS = 1
 CHUNK_SAMPLES = 1024
 CHUNK_BYTES = CHUNK_SAMPLES * 2  # int16 = 2 bytes per sample
+# Consecutive loud chunks (~64 ms each) needed to count as speech. A lone pop, cough or
+# arecord start click must not switch to the short trailing-silence timeout.
+MIN_SPEECH_CHUNKS = 3
 
 
 class STTEngine:
@@ -80,6 +83,7 @@ class STTEngine:
         frames: list[bytes] = []
         silent_chunks = 0
         speech_started = False
+        loud_run = 0
         max_silent_chunks = int(RATE / CHUNK_SAMPLES * silence_timeout_s)
         max_initial_chunks = int(RATE / CHUNK_SAMPLES * initial_silence_timeout_s)
         max_chunks = int(RATE / CHUNK_SAMPLES * max_duration_s)
@@ -99,14 +103,18 @@ class STTEngine:
                 energy = np.abs(audio_chunk).mean()
 
                 if energy < silence_threshold:
+                    loud_run = 0
                     silent_chunks += 1
                     limit = max_silent_chunks if speech_started else max_initial_chunks
                     if silent_chunks >= limit:
                         log.info("Silence detected, stopping recording.")
                         break
                 else:
-                    speech_started = True
-                    silent_chunks = 0
+                    loud_run += 1
+                    if loud_run >= MIN_SPEECH_CHUNKS:
+                        speech_started = True
+                    if speech_started:
+                        silent_chunks = 0
 
         audio = np.frombuffer(b"".join(frames), dtype=np.int16)
         duration = len(audio) / RATE

@@ -20,7 +20,7 @@ dependencies = [
     # LLM - Ollama
     "ollama>=0.4.0",
     # TTS
-    "piper-tts>=1.2.0",
+    "piper-tts>=1.3.0",
     # Resource monitoring
     "psutil>=6.0",
     # Tools

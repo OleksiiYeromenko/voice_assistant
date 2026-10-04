@@ -299,8 +299,8 @@ def check_context_settings() -> None:
     print("  Smaller context → less memory bandwidth wasted → faster tok/s")
     print()
     print("  Recommended for voice assistant:")
-    print(f"    num_ctx: 1024-2048 (you have 4096 in config.yaml)")
-    warn("Consider reducing num_ctx from 4096 to 2048 in config.yaml")
+    print("    num_ctx: 3072-4096 (the fixed prompt alone is ~2k tokens: PERSONA + tool schemas)")
+    warn("Don't go below ~3072 num_ctx; the system prompt + tools need ~2k tokens")
 
 
 def check_memory_bandwidth() -> None:

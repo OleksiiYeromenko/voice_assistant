@@ -19,7 +19,7 @@ stt:
   beam_size: 1
   language: "en"
   vad_filter: true
-  silence_timeout_s: 1.0          # Quiet time after you START speaking that ends the utterance (lower = snappier)
+  silence_timeout_s: 1.2          # Quiet time after you START speaking that ends the utterance (lower = snappier)
   initial_silence_timeout_s: 4.0  # How long to wait for you to start speaking before giving up
   # null = auto-detect USB mic via 'arecord -l' (survives device index changes on reboot).
   # Set to an ALSA device string like "plughw:1,0" to force a specific device.

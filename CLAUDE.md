@@ -96,7 +96,7 @@ API keys go in `.env` (gitignored): `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`.
 Key config values:
 - STT model: `base.en` (options: `tiny.en`, `small.en`)
 - LLM remote: Ollama on GPU PC (`192.168.1.74:11434`), model `gemma4:e4b`
-- LLM local: llama.cpp server on RPi (`localhost:8080`), model `gemma4-e2b-q4km`, `num_predict: 150`
+- LLM local: llama.cpp server on RPi (`localhost:8080`), model `gemma4-e2b-q4km`, `num_predict: 256`
 - TTS voice: `./voices/en_US-hfc_male-medium.onnx`
 - Wake word: `./models/hey_Poon-dyk_acc_0.83_recall_0.67_fp_4.6.onnx`, threshold `0.4`
 - Audio output: `aplay_device: "plughw:2,0"` (USB audio)
