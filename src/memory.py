@@ -370,8 +370,9 @@ class MarkdownMemoryStore:
     def build_system_prompt(self, model_info: str = "") -> str:
         """Assemble the full system prompt from .md files + session data.
 
-        Token budget: ~400 tokens total
-          PERSONA.md:  ~200 tokens
+        Token budget: ~930 tokens (PERSONA.md is ~740 of it; the 14 tool schemas add
+        ~1.3k more, sent separately). Rough breakdown:
+          PERSONA.md:  ~740 tokens
           Profile:     ~40 tokens (preferences as imperatives)
           Facts:       ~100 tokens (last 10)
           Session:     ~30 tokens (latest summary)

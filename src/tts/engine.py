@@ -52,6 +52,9 @@ def _apply_amixer_volume(card: str, level: int) -> None:
     log.warning("TTS volume: no working control found on card %s (tried %s)", card, _AMIXER_CONTROLS)
 
 
+_MAX_PIPER_FAILURES = 3  # consecutive in-process errors before falling back to the CLI for good
+
+
 class _DelayedSound:
     """Plays a WAV after a configurable delay in a background thread. Cancellable.
 
@@ -113,6 +116,11 @@ class TTSEngine:
     ):
         self.voice = voice
         self.aplay_device = aplay_device
+        # In-process Piper voice (loaded once by load_voice()). None → fall back to
+        # spawning the `piper` CLI per sentence, which reloads the voice every time.
+        self._piper_voice = None
+        self._piper_failures = 0  # consecutive in-process failures (see synthesize())
+        self._synth_lock = threading.Lock()  # alerts can speak while a reply is synthesizing
         self._beep_wav: bytes | None = None
         self._startup_sounds: list[Path] = []
         self._greeting_sounds: list[Path] = []
@@ -221,10 +229,83 @@ class TTSEngine:
     # ------------------------------------------------------------------
     # Core TTS
     # ------------------------------------------------------------------
-    def synthesize(self, text: str) -> tuple[bytes, float]:
-        """Synthesize text to WAV bytes in memory. Returns (wav_bytes, synth_time_s).
+    def load_voice(self) -> bool:
+        """Load the Piper voice into memory once and warm it up. Call at startup.
 
-        Uses a temp file because piper's Python package requires --output_file
+        Spawning the ``piper`` CLI per sentence reloads the ONNX voice every time
+        (~1.6 s each on a dev machine); a loaded voice synthesizes a sentence in
+        ~0.05-0.1 s. Returns False (and keeps the CLI fallback) if loading fails.
+        """
+        try:
+            from piper import PiperVoice
+
+            start = time.perf_counter()
+            voice = PiperVoice.load(self.voice)
+            if not hasattr(voice, "synthesize_wav"):
+                raise RuntimeError("piper-tts too old (no synthesize_wav); need >=1.3")
+            self._piper_voice = voice
+            self._synthesize_in_process("Ready.")  # first call is slower; pay it now
+            log.info(f"Piper voice loaded + warmed in {time.perf_counter() - start:.1f}s")
+            return True
+        except Exception as e:
+            self._piper_voice = None
+            log.warning(f"Piper in-process load failed ({e}); using per-sentence CLI fallback")
+            return False
+
+    def _synthesize_in_process(self, text: str) -> bytes:
+        """Synthesize with the loaded voice; returns WAV bytes (in memory, no temp file).
+
+        Returns b"" when Piper completes but produces no audio for this text (e.g. only
+        punctuation): it then never sets the WAV header. A real Piper error is NOT
+        swallowed here: it propagates so synthesize() can count it and fall back to the
+        CLI. (Closing the wave writer without a header raises wave.Error, which would
+        otherwise replace the real exception, so that close error is ignored.)
+        """
+        buf = io.BytesIO()
+        with self._synth_lock:
+            wf = wave.open(buf, "wb")
+            try:
+                self._piper_voice.synthesize_wav(text, wf)
+                try:
+                    wf.getnchannels()  # raises wave.Error if the header was never set
+                except wave.Error:
+                    return b""
+            finally:
+                try:
+                    wf.close()
+                except wave.Error:
+                    pass  # no header was written: nothing to flush
+        return buf.getvalue()
+
+    def synthesize(self, text: str) -> tuple[bytes, float]:
+        """Synthesize text to WAV bytes in memory. Returns (wav_bytes, synth_time_s)."""
+        # Nothing speakable ("...", "—", whitespace): Piper yields no audio. Skip it
+        # rather than treating the empty result as a failure.
+        if not any(c.isalnum() for c in text):
+            return b"", 0.0
+        if self._piper_voice is not None:
+            start = time.perf_counter()
+            try:
+                wav = self._synthesize_in_process(text)
+                self._piper_failures = 0
+                return wav, time.perf_counter() - start
+            except Exception as e:
+                # One bad text must not disable the fast path for good; only give up
+                # after repeated real failures.
+                self._piper_failures += 1
+                log.error(
+                    f"In-process Piper failed ({e}); using CLI for this sentence "
+                    f"({self._piper_failures}/{_MAX_PIPER_FAILURES})"
+                )
+                if self._piper_failures >= _MAX_PIPER_FAILURES:
+                    log.error("Disabling in-process Piper; using the CLI from now on")
+                    self._piper_voice = None
+        return self._synthesize_cli(text)
+
+    def _synthesize_cli(self, text: str) -> tuple[bytes, float]:
+        """Fallback: run the ``piper`` CLI (reloads the voice on every call).
+
+        Uses a temp file because piper's CLI requires --output_file
         (without it, piper tries to play audio itself via ffplay).
         The temp file is deleted immediately after reading.
         """

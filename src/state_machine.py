@@ -150,6 +150,7 @@ class AssistantFSM:
                             self.cfg,
                             self.last_interaction_time,
                             self.session_id,
+                            health=getattr(self, "_health", None),
                         )
                         if new_sid is not None:
                             self.session_id = new_sid
@@ -181,6 +182,7 @@ class AssistantFSM:
             self.cfg,
             self.last_interaction_time,
             self.session_id,
+            health=getattr(self, "_health", None),
         )
         if new_sid is not None:
             self.session_id = new_sid
@@ -205,6 +207,7 @@ class AssistantFSM:
         with Timer() as stt_timer:
             text, rec_time, trans_time = self.stt.record_and_transcribe(
                 silence_timeout_s=self.cfg["stt"]["silence_timeout_s"],
+                initial_silence_timeout_s=self.cfg["stt"].get("initial_silence_timeout_s", 4.0),
             )
         latency.stt_ms = stt_timer.elapsed_ms
 
@@ -280,18 +283,7 @@ class AssistantFSM:
         # Keep last 6 conversational turns to limit context size on the RPi.
         recent = self.conversation[-6:]
 
-        # Tell the model which backend it's running on
-        model_info = f"You are running as: {backend.name} (backend: {decision.backend_key})"
-        system_prompt = (
-            self.memory.build_system_prompt(model_info=model_info) if self.memory else ""
-        )
-
-        # Inject current radio station so the LLM can answer status questions
-        # and include the exact name in remember() calls.
-        from src.tools.player import get_radio_status
-        _radio = get_radio_status()
-        if _radio["active"] and _radio["station"]:
-            system_prompt += f"\n<radio_status>\nCurrently playing: {_radio['station']}\n</radio_status>"
+        system_prompt = self._build_system_prompt(backend, decision.backend_key)
 
         # LLM + Tools + TTS
         tools_used: set[str] = set()
@@ -333,7 +325,9 @@ class AssistantFSM:
                             fallback,
                             list(recent),
                             ALL_TOOLS,
-                            system_prompt,
+                            # Name the backend actually answering (and keep a local
+                            # fallback's prompt identical to its primed cache prefix).
+                            self._build_system_prompt(fallback, fallback_key),
                             self.tts,
                             latency,
                             thinking_proc=thinking_proc,
@@ -386,6 +380,26 @@ class AssistantFSM:
         resume()
 
         return State.IDLE, {}
+
+    def _build_system_prompt(self, backend, backend_key: str) -> str:
+        """System prompt for ``backend``: persona + memory + model info + radio status."""
+        from src.main import model_info_line
+
+        model_info = model_info_line(backend, backend_key)
+        system_prompt = (
+            self.memory.build_system_prompt(model_info=model_info) if self.memory else ""
+        )
+
+        # Inject current radio station so the LLM can answer status questions
+        # and include the exact name in remember() calls.
+        from src.tools.player import get_radio_status
+
+        _radio = get_radio_status()
+        if _radio["active"] and _radio["station"]:
+            system_prompt += (
+                f"\n<radio_status>\nCurrently playing: {_radio['station']}\n</radio_status>"
+            )
+        return system_prompt
 
     def _speak_with_ui(self, text: str) -> None:
         """Speak text and mirror it to the UI chat view."""

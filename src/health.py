@@ -64,17 +64,25 @@ class BackendHealthMonitor:
         self._running = False
 
     def start(self) -> None:
-        """Start background polling threads and run an immediate first check."""
+        """Start background polling threads and run an immediate first check.
+
+        The remote (GPU PC) check runs to completion before returning (bounded by its
+        2 s connect timeout): startup code decides what to warm/prime from is_up("remote")
+        right after this call, and a status that is still the initial "offline" default
+        would make it treat a reachable GPU PC as down. Cloud checks stay non-blocking.
+        """
         self._running = True
+        self._check_and_update("remote")
         for key, interval in _POLL_INTERVALS.items():
             threading.Thread(
                 target=self._poll_loop, args=(key, interval),
                 daemon=True, name=f"health-{key}",
             ).start()
-            # Immediate check (non-blocking)
-            threading.Thread(
-                target=self._check_and_update, args=(key,), daemon=True,
-            ).start()
+            if key != "remote":
+                # Immediate check (non-blocking)
+                threading.Thread(
+                    target=self._check_and_update, args=(key,), daemon=True,
+                ).start()
 
     def stop(self) -> None:
         self._running = False

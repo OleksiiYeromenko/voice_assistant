@@ -7,6 +7,7 @@ called by the FSM state handlers.
 
 import logging
 import sys
+import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -53,6 +54,12 @@ ACTION_TOOLS: frozenset[str] = frozenset({
     "remember",
     "start_vacuum",
 })
+
+
+def model_info_line(backend, backend_key: str) -> str:
+    """The <current_model> text put in the system prompt. Single source of truth: the
+    startup cache priming must build the exact same prompt the state machine sends."""
+    return f"You are running as: {backend.name} (backend: {backend_key})"
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +375,76 @@ def run_llm_with_tools(
 
 
 # ---------------------------------------------------------------------------
+# Local llama.cpp prompt-cache priming
+# ---------------------------------------------------------------------------
+class _LocalCachePrimer:
+    """Re-fills the local llama.cpp KV cache with the real system prompt + tools.
+
+    llama-server runs one slot (-np 1), so any other request (e.g. a session summary)
+    evicts the cached prefix, and a cold prefill takes about a minute on the Pi. Priming
+    runs on a background thread; overlapping requests are skipped.
+    """
+
+    def __init__(self, backend, memory):
+        self._backend = backend
+        self._memory = memory
+        self._busy = threading.Lock()
+
+    def prime_async(self, reason: str) -> None:
+        threading.Thread(
+            target=self._run, args=(reason,), daemon=True, name="prime-local-cache"
+        ).start()
+
+    def _run(self, reason: str) -> None:
+        if not self._busy.acquire(blocking=False):
+            return  # already priming
+        try:
+            from src.tools.executor import ALL_TOOLS
+
+            log.info(f"Priming local prompt cache ({reason})")
+            system = self._memory.build_system_prompt(
+                model_info=model_info_line(self._backend, "local")
+            )
+            self._backend.prime_cache(system, ALL_TOOLS)
+        finally:
+            self._busy.release()
+
+
+_local_primer: _LocalCachePrimer | None = None
+
+
+def _setup_local_priming(backends: dict, memory, health, preferred_key: str) -> None:
+    """Prime the local llama.cpp KV cache (a cold prefill takes ~a minute on the Pi) so the
+    first local question does not pay for it.
+
+    Priming keeps all CPU cores busy, so do it at startup only when local is the default
+    backend. Otherwise do it when the GPU PC drops offline, which is the moment local
+    becomes the default.
+    """
+    global _local_primer
+    local_backend = backends.get("local")
+    if not isinstance(local_backend, LlamaCppBackend):
+        return
+    _local_primer = _LocalCachePrimer(local_backend, memory)
+    if preferred_key == "local" or not health.is_up(preferred_key):
+        _local_primer.prime_async("local is the default backend")
+    else:
+        log.info(f"Skipping startup cache priming ({preferred_key} is the default and up)")
+
+    remote_was_up = [health.is_up("remote")]
+
+    def _prime_when_remote_drops(statuses) -> None:
+        remote = next((st for st in statuses if st.key == "remote"), None)
+        if remote is None:
+            return
+        if remote_was_up[0] and not remote.online:
+            _local_primer.prime_async("remote went offline")
+        remote_was_up[0] = remote.online
+
+    health.add_listener(_prime_when_remote_drops)
+
+
+# ---------------------------------------------------------------------------
 # Session management
 # ---------------------------------------------------------------------------
 def _summarize_in_background(backend, messages, memory, session_id):
@@ -407,9 +484,15 @@ def _summarize_in_background(backend, messages, memory, session_id):
                 log.info(f"Session topics: {topics_line}")
     except Exception as e:
         log.warning(f"Background session summary failed: {e}")
+    finally:
+        # A local summary evicts the primed prompt from the single llama.cpp slot.
+        if isinstance(backend, LlamaCppBackend) and _local_primer is not None:
+            _local_primer.prime_async("after local session summary")
 
 
-def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_time, session_id):
+def _maybe_end_session(
+    conversation, memory, backends, cfg, last_interaction_time, session_id, health=None
+):
     """Check if session has expired. If so, close and open a new one.
 
     Summarization runs in a background thread so SESSION_CHECK is non-blocking.
@@ -434,7 +517,12 @@ def _maybe_end_session(conversation, memory, backends, cfg, last_interaction_tim
     )
     summary_messages = None
     if should_summarize:
-        backend = backends.get("local") or backends.get("remote")
+        # Prefer the GPU PC when it is up: summarizing locally would evict the primed
+        # prompt from the Pi's single llama.cpp slot and compete with the next query.
+        if health is not None and "remote" in backends and health.is_up("remote"):
+            backend = backends["remote"]
+        else:
+            backend = backends.get("local") or backends.get("remote")
         if backend:
             summary_messages = list(conversation[-10:])
             summary_messages.append(
@@ -498,6 +586,7 @@ def assistant_loop(cfg: dict):
         sounds_dir=cfg["tts"].get("sounds_dir", "./sounds"),
         volume=int(cfg["tts"].get("volume", 80)),
     )
+    tts.load_voice()  # keep Piper loaded in-process: no per-sentence voice reload
 
     register_alert_callback(tts.speak)
     init_player(cfg)
@@ -555,6 +644,8 @@ def assistant_loop(cfg: dict):
     memory.close_stale_sessions()
     register_tool("remember", lambda fact: memory.remember(fact))
     register_tool("recall", lambda query="": memory.recall(query))
+
+    _setup_local_priming(backends, memory, health, preferred_key)
 
     # Wake word detector (optional)
     wake_detector = None
