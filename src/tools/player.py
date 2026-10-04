@@ -124,7 +124,7 @@ def play_radio(query: str) -> str:
 
     query = (query or "").strip()
     if not query:
-        return "I need a station name or genre to play."
+        return "ERROR: No station name or genre was given. Ask the user what to play."
 
     query = _normalize_spelled_letters(query)
     want_random, country_code, genre = _parse_radio_query(query)
@@ -141,10 +141,16 @@ def play_radio(query: str) -> str:
             )
     except Exception as e:
         log.error(f"Radio Browser search failed: {e}")
-        return f"Couldn't reach the radio directory: {e}"
+        return (
+            f"ERROR: Couldn't reach the radio directory: {e}."
+            " Tell the user the radio is unavailable; do not invent a station."
+        )
 
     if not stations:
-        return f"No stations found for '{query}'."
+        return (
+            f"ERROR: No stations found for '{query}'."
+            " Tell the user and offer to try something else."
+        )
 
     if country_code:
         filtered = [s for s in stations if s.get("countrycode", "").upper() == country_code]
@@ -155,7 +161,10 @@ def play_radio(query: str) -> str:
     url = chosen.get("url_resolved") or chosen.get("url")
     name = chosen.get("name", "").strip() or query
     if not url:
-        return f"No playable station found for '{query}'."
+        return (
+            f"ERROR: No playable station found for '{query}'."
+            " Tell the user and offer to try something else."
+        )
 
     with _lock:
         _stop_locked()
@@ -189,7 +198,7 @@ def set_volume(level: int) -> str:
     try:
         level = int(level)
     except (TypeError, ValueError):
-        return "Volume must be a number between 0 and 100."
+        return "ERROR: Volume must be a number between 0 and 100. Ask the user for a level."
     level = _clamp_volume(level)
 
     with _lock:
@@ -276,7 +285,7 @@ def release(owner: str) -> None:
 
 
 def resume() -> None:
-    """Start or resume a stream after TTS has finished.
+    """Start or resume a stream after TTS has finished (no-op while anyone holds the device).
 
     Two cases:
     - pause() killed a running stream, or play_radio() queued a new URL →
@@ -286,6 +295,11 @@ def resume() -> None:
     global _was_playing_before_pause, _paused_url, _paused_station
     resumed_station: str | None = None
     with _lock:
+        # Checked under the same lock as the restart itself: if a holder (the user's turn,
+        # an alert) took the device after release() looked, leave the radio off. That
+        # holder's own release() will restart it.
+        if _holders:
+            return
         if not _was_playing_before_pause:
             return
         _was_playing_before_pause = False

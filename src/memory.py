@@ -308,7 +308,7 @@ class MarkdownMemoryStore:
         """
         text = self._clean_memory_text(text)
         if not text:
-            return "There was nothing to remember."
+            return "ERROR: There was nothing to remember. Ask the user what to remember."
 
         # 1. Check for name
         for pattern in _NAME_PATTERNS:
