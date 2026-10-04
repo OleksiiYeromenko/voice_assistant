@@ -221,8 +221,10 @@ def get_radio_status() -> dict:
     return {"station": station, "active": active}
 
 
-def pause() -> None:
+def pause() -> bool:
     """Kill the current stream to release the audio device; save state for resume().
+
+    Returns True if it stopped a running stream (so the caller knows it owes a resume()).
 
     IPC-pausing mpv does not reliably close the exclusive ALSA device, so we
     terminate the process outright and restart it in resume() once TTS is done.
@@ -231,7 +233,7 @@ def pause() -> None:
     was_killed = False
     with _lock:
         if _mpv_proc is None or _mpv_proc.poll() is not None:
-            return
+            return False
         # Read stream info before _stop_locked() clears it.
         url = _current_url
         station = _current_station
@@ -245,6 +247,7 @@ def pause() -> None:
         # ALSA holds the device briefly after the process exits; give it a moment
         # so that the greeting sound played immediately after can open the device.
         time.sleep(0.15)
+    return was_killed
 
 
 def resume() -> None:

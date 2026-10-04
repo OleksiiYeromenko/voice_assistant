@@ -63,6 +63,8 @@ IDLE → SESSION_CHECK → LISTENING → THINKING → IDLE
 
 `src/main.py` contains the LLM streaming loop (`run_llm_with_tools`) and TTS orchestration called from THINKING state.
 
+**Gotcha — shared state:** the app runs as `python -m src.main` (module `__main__`), while the state machine does `from src.main import ...`, which loads a *second copy* of that file as `src.main`. Module-level variables are NOT shared between the two. State that both sides need goes in `src/runtime_state.py`.
+
 ### LLM Backends (`src/llm/backends.py`)
 
 Four backends selected at runtime by `src/router/router.py`:

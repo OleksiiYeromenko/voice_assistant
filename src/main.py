@@ -9,9 +9,11 @@ import logging
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from src import runtime_state
 from src.config import load_config
 from src.health import BackendHealthMonitor
 from src.llm.backends import (
@@ -27,7 +29,13 @@ from src.memory import MarkdownMemoryStore
 from src.monitor import LatencyRecord, snapshot
 from src.router.router import ModelRouter
 from src.stt.engine import STTEngine
-from src.tools.executor import execute_tool, register_tool
+from src.tools.executor import (
+    PERSISTENT_WRITE_TOOLS,
+    READ_ONLY_TOOLS,
+    UNTRUSTED_TOOLS,
+    execute_tool,
+    register_tool,
+)
 from src.tools.player import init_player
 from src.tools.timers import register_alert_callback
 from src.tools.vacuum import init_vacuum
@@ -54,6 +62,49 @@ ACTION_TOOLS: frozenset[str] = frozenset({
     "remember",
     "start_vacuum",
 })
+
+
+@dataclass
+class TurnProgress:
+    """What a turn has already done, so a failed turn is only retried when that is safe.
+
+    Re-running a turn on a fallback backend repeats everything: the user would hear the
+    reply twice and a tool like add_to_shopping_list could run twice.
+    """
+
+    spoke: bool = False  # some of the reply was already spoken
+    tools: set[str] = field(default_factory=set)  # tools started (even if they then failed)
+
+    def safe_to_retry(self) -> bool:
+        return not self.spoke and self.tools <= READ_ONLY_TOOLS
+
+
+_LOCAL_SUMMARY_MAX_WAIT_S = 600  # a local summary waits this long for idle (runtime_state)
+
+
+def strip_untrusted_tool_messages(delta: list[dict]) -> list[dict]:
+    """Remove raw output of UNTRUSTED_TOOLS (and the calls that made it) from a turn's
+    messages before they are kept as conversation history.
+
+    The model's own final answer stays, so follow-up questions still have context, but
+    web text can no longer sit in history and influence later turns (e.g. get turned
+    into a saved "preference" by a later remember call).
+    """
+    out: list[dict] = []
+    for msg in delta:
+        if msg.get("role") == "tool" and msg.get("tool_name") in UNTRUSTED_TOOLS:
+            continue
+        calls = msg.get("tool_calls")
+        if msg.get("role") == "assistant" and calls:
+            kept = [c for c in calls if c.get("function", {}).get("name") not in UNTRUSTED_TOOLS]
+            if len(kept) != len(calls):
+                if not kept and not msg.get("content"):
+                    continue
+                msg = {k: v for k, v in msg.items() if k != "tool_calls"}
+                if kept:
+                    msg["tool_calls"] = kept
+        out.append(msg)
+    return out
 
 
 def model_info_line(backend, backend_key: str) -> str:
@@ -112,6 +163,7 @@ def build_backends(cfg: dict) -> dict:
         num_predict=model_cfg.get("num_predict"),
         num_thread=model_cfg.get("num_thread"),
         think=model_cfg.get("think", False),
+        read_timeout_s=float(llm_cfg.get("remote_read_timeout_s", 60)),
         label="remote",
     )
 
@@ -199,6 +251,7 @@ def run_llm_with_tools(
     latency: LatencyRecord,
     thinking_proc=None,
     ui_bus=None,
+    progress: TurnProgress | None = None,
 ) -> tuple[str, set[str], list[dict]]:
     """Run LLM with tool calling and per-sentence streaming TTS.
 
@@ -209,6 +262,7 @@ def run_llm_with_tools(
     a canned action-tool response instead of calling the tool.
     ui_bus is optional; when provided, streaming tokens and tool events are emitted.
     """
+    progress = progress if progress is not None else TurnProgress()
     full_response = ""
     tools_used: set[str] = set()
     last_round_tools: set[str] = set()
@@ -246,6 +300,8 @@ def run_llm_with_tools(
             if not speaking_emitted and text.strip() and ui_bus is not None:
                 ui_bus.state_changed.emit("SPEAKING")
                 speaking_emitted = True
+            if text.strip():
+                progress.spoke = True
             if not printed_prefix:
                 print("\n🤖 ", end="", flush=True)
                 printed_prefix = True
@@ -281,9 +337,21 @@ def run_llm_with_tools(
             for tc in tool_calls:
                 log.info(f"Tool call: {tc.name}({tc.arguments})")
                 tools_used.add(tc.name)
+                progress.tools.add(tc.name)
                 if ui_bus is not None:
                     ui_bus.tool_started.emit(tc.name)
-                result = execute_tool(tc.name, tc.arguments, backend=backend)
+                if tc.name in PERSISTENT_WRITE_TOOLS and (
+                    progress.tools & UNTRUSTED_TOOLS
+                    or any(c.name in UNTRUSTED_TOOLS for c in tool_calls)
+                ):
+                    # Text from a web search must not be able to write to long-term memory.
+                    log.warning(f"Refused {tc.name}: web content is in play this turn")
+                    result = (
+                        "ERROR: Cannot save to memory in the same request as a web search. "
+                        "Tell the user to ask you to remember it separately."
+                    )
+                else:
+                    result = execute_tool(tc.name, tc.arguments, backend=backend)
                 if ui_bus is not None:
                     ui_bus.tool_done.emit(tc.name, str(result)[:80])
                 if tc.name == "get_recipe" and ui_bus is not None:
@@ -410,9 +478,6 @@ class _LocalCachePrimer:
             self._busy.release()
 
 
-_local_primer: _LocalCachePrimer | None = None
-
-
 def _setup_local_priming(backends: dict, memory, health, preferred_key: str) -> None:
     """Prime the local llama.cpp KV cache (a cold prefill takes ~a minute on the Pi) so the
     first local question does not pay for it.
@@ -421,13 +486,12 @@ def _setup_local_priming(backends: dict, memory, health, preferred_key: str) -> 
     backend. Otherwise do it when the GPU PC drops offline, which is the moment local
     becomes the default.
     """
-    global _local_primer
     local_backend = backends.get("local")
     if not isinstance(local_backend, LlamaCppBackend):
         return
-    _local_primer = _LocalCachePrimer(local_backend, memory)
+    primer = runtime_state.local_primer = _LocalCachePrimer(local_backend, memory)
     if preferred_key == "local" or not health.is_up(preferred_key):
-        _local_primer.prime_async("local is the default backend")
+        primer.prime_async("local is the default backend")
     else:
         log.info(f"Skipping startup cache priming ({preferred_key} is the default and up)")
 
@@ -438,7 +502,7 @@ def _setup_local_priming(backends: dict, memory, health, preferred_key: str) -> 
         if remote is None:
             return
         if remote_was_up[0] and not remote.online:
-            _local_primer.prime_async("remote went offline")
+            primer.prime_async("remote went offline")
         remote_was_up[0] = remote.online
 
     health.add_listener(_prime_when_remote_drops)
@@ -453,6 +517,10 @@ def _summarize_in_background(backend, messages, memory, session_id):
     Writes summary + topics back to the (already-closed) session record.
     """
     raw_text = ""
+    if isinstance(backend, LlamaCppBackend):
+        # Local summaries use the same single llama.cpp slot as the user's query; wait for
+        # the assistant to go idle instead of slowing the turn that triggered the rotation.
+        runtime_state.assistant_idle.wait(timeout=_LOCAL_SUMMARY_MAX_WAIT_S)
     t0 = time.perf_counter()
     try:
         for chunk in backend.stream(
@@ -486,8 +554,8 @@ def _summarize_in_background(backend, messages, memory, session_id):
         log.warning(f"Background session summary failed: {e}")
     finally:
         # A local summary evicts the primed prompt from the single llama.cpp slot.
-        if isinstance(backend, LlamaCppBackend) and _local_primer is not None:
-            _local_primer.prime_async("after local session summary")
+        if isinstance(backend, LlamaCppBackend) and runtime_state.local_primer is not None:
+            runtime_state.local_primer.prime_async("after local session summary")
 
 
 def _maybe_end_session(
@@ -588,7 +656,7 @@ def assistant_loop(cfg: dict):
     )
     tts.load_voice()  # keep Piper loaded in-process: no per-sentence voice reload
 
-    register_alert_callback(tts.speak)
+    register_alert_callback(tts.speak_alert)
     init_player(cfg)
     init_vacuum(cfg)
 

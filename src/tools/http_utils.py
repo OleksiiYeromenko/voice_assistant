@@ -33,6 +33,12 @@ def http_get(
     raise last_err
 
 
+# A POST that timed out while *reading* the response may already have been processed by
+# the server, so retrying it can duplicate the action (e.g. add a shopping item twice).
+# Only errors that happen before the request is sent are safe to retry.
+_POST_SAFE_RETRY = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+
 def http_post(
     url: str,
     *,
@@ -40,7 +46,10 @@ def http_post(
     backoff: tuple[float, ...] = (0.5, 1.0),
     **kwargs,
 ) -> httpx.Response:
-    """POST with automatic retry. Raises on final failure."""
+    """POST with automatic retry on connect failures and 5xx. Raises on final failure.
+
+    Not retried after a read timeout or a dropped response (the action may have run).
+    """
     last_err: Exception = RuntimeError("no attempts made")
     for i in range(retries):
         if i > 0:
@@ -54,6 +63,8 @@ def http_post(
                 raise
             last_err = e
         except httpx.RequestError as e:
+            if not isinstance(e, _POST_SAFE_RETRY):
+                raise
             last_err = e
     raise last_err
 

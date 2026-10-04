@@ -133,13 +133,16 @@ class OllamaBackend:
         system_prompt: str = "",
         think: bool = False,
         label: str = "local",
+        read_timeout_s: float = 300.0,
     ):
         import httpx
         import ollama
 
+        # read = max silence between streamed chunks. A GPU PC that goes to sleep mid-reply
+        # would otherwise block the assistant for this long, so remote uses a short one.
         self._client = ollama.Client(
             host=base_url,
-            timeout=httpx.Timeout(connect=2.0, read=300.0, write=30.0, pool=10.0),
+            timeout=httpx.Timeout(connect=2.0, read=read_timeout_s, write=30.0, pool=10.0),
         )
         self._base_url = base_url.rstrip("/")  # stored for is_loaded() / diagnostics
         self._model = model

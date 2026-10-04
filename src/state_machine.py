@@ -92,6 +92,7 @@ class AssistantFSM:
 
         log.info(f"FSM started (input_mode={self.input_mode.name})")
 
+        from src.runtime_state import assistant_idle
         from src.tools.player import resume
 
         try:
@@ -99,6 +100,10 @@ class AssistantFSM:
                 handler = self._handlers[state]
                 prev = state
                 state, ctx = handler(ctx)
+                if state == State.IDLE:
+                    assistant_idle.set()
+                else:
+                    assistant_idle.clear()
                 if state == State.IDLE and prev != State.IDLE:
                     # Wake-word trigger pauses the radio; whichever way the turn ended
                     # (no speech, switch command, normal reply) restart it. No-op if
@@ -109,6 +114,7 @@ class AssistantFSM:
                     if self.ui_bus is not None:
                         self.ui_bus.state_changed.emit(state.name)
         finally:
+            assistant_idle.set()  # never leave a waiting local summary blocked on shutdown
             resume()  # an exception mid-turn must not leave the radio paused
             self.memory.close_session(self.session_id)
             log.info("Session closed on shutdown.")
@@ -226,7 +232,7 @@ class AssistantFSM:
     def _state_thinking(self, ctx: dict) -> tuple[State, dict]:
         """Route, run LLM with tools, stream TTS."""
         from src.llm.backends import LlamaCppBackend, OllamaBackend
-        from src.main import run_llm_with_tools
+        from src.main import TurnProgress, run_llm_with_tools, strip_untrusted_tool_messages
         from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
         from src.tools.executor import ALL_TOOLS, VOLATILE_TOOLS
 
@@ -288,6 +294,7 @@ class AssistantFSM:
         # LLM + Tools + TTS
         tools_used: set[str] = set()
         tool_delta: list[dict] = []
+        progress = TurnProgress()
         try:
             response, tools_used, tool_delta = run_llm_with_tools(
                 backend,
@@ -298,9 +305,13 @@ class AssistantFSM:
                 latency,
                 thinking_proc=thinking_proc,
                 ui_bus=self.ui_bus,
+                progress=progress,
             )
         except Exception as e:
             log.error(f"LLM failed ({decision.backend_key}): {e}")
+            # Stop trying a dead GPU PC on every question; the 60 s poll flips it back up.
+            if actual_key == "remote" and getattr(self, "_health", None) is not None:
+                self._health.mark_down("remote", f"request failed: {e}")
             if decision.is_explicit:
                 # User explicitly requested this backend — voice the error, reset to auto routing.
                 error_msg = (
@@ -310,6 +321,15 @@ class AssistantFSM:
                 self.router.session_preference = None
                 self._speak_with_ui(error_msg)
                 response = error_msg
+            elif not progress.safe_to_retry():
+                # Part of the reply was already spoken, or a tool with side effects already
+                # ran. Re-running the whole turn on another backend would repeat both.
+                log.warning(
+                    f"{decision.backend_key} failed mid-turn (spoke={progress.spoke}, "
+                    f"tools={sorted(progress.tools)}); not re-running on a fallback"
+                )
+                response = "Sorry, I lost my connection partway through. Please ask again."
+                self._speak_with_ui(response)
             else:
                 fallback = self.router.get_fallback(decision.backend_key)
                 if fallback:
@@ -345,8 +365,9 @@ class AssistantFSM:
             self.conversation.pop()  # Remove user message — no stale data in context
         else:
             # Extend with full delta (tool calls, results, final response) so the
-            # local 2B model sees the correct tool-call pattern on the next turn.
-            self.conversation.extend(tool_delta)
+            # local 2B model sees the correct tool-call pattern on the next turn. Raw web
+            # search output is dropped: it is untrusted text and must not linger in history.
+            self.conversation.extend(strip_untrusted_tool_messages(tool_delta))
 
         # Metrics
         latency.total_ms = (time.perf_counter() - start) * 1000

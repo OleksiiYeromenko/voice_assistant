@@ -22,6 +22,7 @@ DEFAULT_MEMORY_DIR = Path("memory")
 DEFAULT_DB_PATH = Path("data/memory.db")
 MAX_PROMPT_FACTS = 10
 MAX_STORED_FACTS = 100
+MAX_MEMORY_TEXT_CHARS = 200  # longest single remembered fact/preference
 MAX_STORED_SESSIONS = 50
 
 # ---------------------------------------------------------------------------
@@ -285,12 +286,30 @@ class MarkdownMemoryStore:
     # ------------------------------------------------------------------
     # Tool: remember — classify and store preference or fact
     # ------------------------------------------------------------------
+    @staticmethod
+    def _clean_memory_text(text: str, max_len: int = MAX_MEMORY_TEXT_CHARS) -> str:
+        """Make text safe to store in USER.md and later paste into the system prompt.
+
+        Newlines would let one remembered "fact" add its own headings or bullet lines to
+        USER.md, and angle brackets could close the <known_facts>/<user_profile> tags the
+        text is placed inside. Also caps the length.
+        """
+        text = re.sub(r"[\x00-\x1f\x7f]+", " ", text or "")  # newlines, tabs, control chars
+        text = text.replace("<", " ").replace(">", " ")
+        text = re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"^[#*\-\s]+", "", text)  # leading markdown heading / bullet markers
+        return text[:max_len].rstrip()
+
     def remember(self, text: str) -> str:
         """Classify text as name, preference, or fact, then store accordingly.
 
         Called by the 'remember' tool. Uses zero-cost regex patterns to detect
         preferences before falling back to generic fact storage.
         """
+        text = self._clean_memory_text(text)
+        if not text:
+            return "There was nothing to remember."
+
         # 1. Check for name
         for pattern in _NAME_PATTERNS:
             m = pattern.search(text)
