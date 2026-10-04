@@ -37,6 +37,7 @@ _current_url: str | None = None  # URL of the active/last stream
 _was_playing_before_pause: bool = False
 _paused_url: str | None = None  # saved URL so resume() can restart
 _paused_station: str | None = None  # saved station name for display
+_holders: set[str] = set()  # who currently needs the audio device free (see hold/release)
 
 _radio_change_callback = None  # (station_name: str) → None; "" means stopped
 
@@ -248,6 +249,30 @@ def pause() -> bool:
         # so that the greeting sound played immediately after can open the device.
         time.sleep(0.15)
     return was_killed
+
+
+def hold(owner: str) -> None:
+    """Keep the radio off the audio device on behalf of ``owner`` until release(owner).
+
+    Several things need the device without the radio on it: the assistant's own turn
+    (wake word -> reply) and timer alerts. With a bare pause()/resume() pair, one of
+    them finishing could restart the radio under the other (an alert waiting behind a
+    reply, or a wake word arriving mid-alert). Here the radio is only restarted when
+    the LAST holder lets go.
+    """
+    with _lock:
+        _holders.add(owner)
+    pause()
+
+
+def release(owner: str) -> None:
+    """Let go of hold(owner); restart the radio (or a station queued by play_radio) if
+    nobody else is still holding the device. Safe to call when not holding."""
+    with _lock:
+        _holders.discard(owner)
+        still_held = bool(_holders)
+    if not still_held:
+        resume()
 
 
 def resume() -> None:

@@ -396,17 +396,18 @@ class TTSEngine:
         """Speak a background alert (e.g. a timer) without losing it to a busy audio device.
 
         Called from a timer thread, so it may fire while a reply is being spoken or the
-        radio is playing: wait (bounded) for any reply to finish, pause the radio for the
-        duration, and retry playback briefly if the device is still held by something else.
+        radio is playing: wait (bounded) for any reply to finish, keep the radio off the
+        device while it plays, and retry playback briefly if something else still has it.
         """
         if not text.strip():
             return
-        from src.tools.player import pause, resume
+        from src.tools.player import hold, release
 
         got_lock = self._audio_lock.acquire(timeout=_ALERT_LOCK_WAIT_S)
-        paused = False
         try:
-            paused = pause()  # True only if we stopped a stream, so only then do we resume
+            # Registered holder, not a bare pause/resume: the radio restarts only when the
+            # assistant's own turn is also done with the device (see player.hold).
+            hold("alert")
             wav_data, _ = self.synthesize(text)
             for attempt in range(1, _ALERT_ATTEMPTS + 1):
                 if self._wait_for_playback(self._start_playback(wav_data)):
@@ -417,8 +418,7 @@ class TTSEngine:
         except Exception as e:
             log.error(f"Alert failed: {e}")
         finally:
-            if paused:
-                resume()
+            release("alert")
             if got_lock:
                 self._audio_lock.release()
 

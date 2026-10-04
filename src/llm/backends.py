@@ -144,6 +144,12 @@ class OllamaBackend:
             host=base_url,
             timeout=httpx.Timeout(connect=2.0, read=read_timeout_s, write=30.0, pool=10.0),
         )
+        # warm() loads the model: Ollama only answers after loading, which can take minutes
+        # (PC just woke, slow disk), so it must not use the short per-chunk timeout above.
+        self._warm_client = ollama.Client(
+            host=base_url,
+            timeout=httpx.Timeout(connect=2.0, read=300.0, write=30.0, pool=10.0),
+        )
         self._base_url = base_url.rstrip("/")  # stored for is_loaded() / diagnostics
         self._model = model
         self._temperature = temperature
@@ -195,10 +201,10 @@ class OllamaBackend:
             # `think` is supported in ollama-python ≥ 0.4.7 (qwen3 hybrid-think).
             # Try with it first; fall back silently if this version doesn't support it.
             try:
-                self._client.chat(**chat_kwargs, think=self._think)
+                self._warm_client.chat(**chat_kwargs, think=self._think)
             except TypeError:
                 log.debug("ollama client doesn't support think= kwarg; retrying without it")
-                self._client.chat(**chat_kwargs)
+                self._warm_client.chat(**chat_kwargs)
             elapsed = time.perf_counter() - start
             log.info(f"Model {self._model} warm in {elapsed:.1f}s")
         except Exception as e:

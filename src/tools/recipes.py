@@ -130,6 +130,7 @@ def get_recipe(recipe_name: str) -> str:
             timeout=10,
             retries=3,
             backoff=(1.0, 2.0),
+            idempotent=True,  # a read-only database query sent as POST
         )
         results = r.json().get("results", [])
 

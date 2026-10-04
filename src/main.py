@@ -74,12 +74,46 @@ class TurnProgress:
 
     spoke: bool = False  # some of the reply was already spoken
     tools: set[str] = field(default_factory=set)  # tools started (even if they then failed)
+    # (tool, result) for tools with side effects that ran. Their results are the short
+    # confirmations written to be spoken ("Timer set...", "Starting to clean.").
+    actions: list[tuple[str, str]] = field(default_factory=list)
+
+    def completed_action_results(self) -> list[str]:
+        """Confirmations of side-effect tools that actually succeeded."""
+        bad = ("ERROR", "Tool error", "Unknown tool")
+        return [r for _, r in self.actions if r and not r.startswith(bad)]
 
     def safe_to_retry(self) -> bool:
         return not self.spoke and self.tools <= READ_ONLY_TOOLS
 
 
 _LOCAL_SUMMARY_MAX_WAIT_S = 600  # a local summary waits this long for idle (runtime_state)
+
+
+_DOWN_HTTP_CODES = frozenset({502, 503, 504})
+
+
+def is_connectivity_error(exc: BaseException) -> bool:
+    """True if ``exc`` means the backend itself is unreachable or not answering (network
+    error, timeout, 502/503/504), as opposed to a bug in our own code or a tool.
+
+    Only these should mark a backend down: a local bug must not take the GPU PC out of
+    routing. Looks through wrapped exceptions (__cause__/__context__).
+    """
+    import httpx
+
+    seen = 0
+    while exc is not None and seen < 6:
+        if isinstance(exc, (httpx.TransportError, ConnectionError, TimeoutError)):
+            return True
+        code = getattr(exc, "status_code", None) or getattr(
+            getattr(exc, "response", None), "status_code", None
+        )
+        if code in _DOWN_HTTP_CODES:
+            return True
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return False
 
 
 def strip_untrusted_tool_messages(delta: list[dict]) -> list[dict]:
@@ -352,6 +386,8 @@ def run_llm_with_tools(
                     )
                 else:
                     result = execute_tool(tc.name, tc.arguments, backend=backend)
+                    if tc.name not in READ_ONLY_TOOLS:
+                        progress.actions.append((tc.name, str(result)))
                 if ui_bus is not None:
                     ui_bus.tool_done.emit(tc.name, str(result)[:80])
                 if tc.name == "get_recipe" and ui_bus is not None:
@@ -420,6 +456,8 @@ def run_llm_with_tools(
 
         speaking_emitted = False
         for text in tts.stream_speak(final_token_gen(), latency=latency):
+            if text.strip():
+                progress.spoke = True
             if not speaking_emitted and text.strip() and ui_bus is not None:
                 ui_bus.state_changed.emit("SPEAKING")
                 speaking_emitted = True
@@ -476,6 +514,36 @@ class _LocalCachePrimer:
             self._backend.prime_cache(system, ALL_TOOLS)
         finally:
             self._busy.release()
+
+
+def _setup_remote_rewarm(backends: dict, health) -> None:
+    """Reload the GPU PC's model right after it comes back online.
+
+    A PC that was asleep or restarted answers the health check before its model is loaded
+    again; without this the first real question pays the load time, which can exceed the
+    remote read timeout and bounce the question to the Pi.
+    """
+    remote = backends.get("remote")
+    if remote is None or not hasattr(remote, "warm"):
+        return
+    was_up = [health.is_up("remote")]
+
+    def _warm() -> None:
+        try:
+            log.info("GPU PC is back online — re-warming its model")
+            remote.warm()
+        except Exception as e:  # warm() re-raises a 404 (model not installed)
+            log.warning(f"Re-warm skipped: {e}")
+
+    def _on_status(statuses) -> None:
+        st = next((x for x in statuses if x.key == "remote"), None)
+        if st is None:
+            return
+        if st.online and not was_up[0]:
+            threading.Thread(target=_warm, daemon=True, name="rewarm-remote").start()
+        was_up[0] = st.online
+
+    health.add_listener(_on_status)
 
 
 def _setup_local_priming(backends: dict, memory, health, preferred_key: str) -> None:
@@ -714,6 +782,7 @@ def assistant_loop(cfg: dict):
     register_tool("recall", lambda query="": memory.recall(query))
 
     _setup_local_priming(backends, memory, health, preferred_key)
+    _setup_remote_rewarm(backends, health)
 
     # Wake word detector (optional)
     wake_detector = None
