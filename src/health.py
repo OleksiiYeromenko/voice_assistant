@@ -1,7 +1,8 @@
 """Unified backend health monitor — single source of truth for all backend availability.
 
 Polls remote Ollama every 60s and cloud backends every 5min via real API checks
-(list-models endpoint, zero token cost). Local RPi is always considered healthy.
+(list-models endpoint, zero token cost); a failed request also marks a backend down at
+once. Local RPi is always considered healthy.
 
 Router reads .is_up(key) on each route decision.
 UI subscribes via add_listener() to receive BackendStatus updates.
@@ -16,7 +17,7 @@ from dataclasses import dataclass
 log = logging.getLogger(__name__)
 
 _POLL_INTERVALS: dict[str, int] = {
-    "remote": 300,
+    "remote": 60,
     "claude": 300,
     "gemini": 300,
 }
@@ -98,6 +99,22 @@ class BackendHealthMonitor:
             self._active_key = key
             for k, s in self._statuses.items():
                 self._statuses[k] = BackendStatus(s.key, s.label, s.online, s.model, k == key)
+        self._notify()
+
+    def mark_down(self, key: str, reason: str = "request failed") -> None:
+        """Mark a backend offline right away after a failed request.
+
+        The regular poll re-checks it (remote: every 60 s) and flips it back up when it
+        answers, so a GPU PC that went to sleep stops being tried on every question.
+        """
+        with self._lock:
+            prev = self._statuses.get(key)
+            if prev is None or not prev.online:
+                return
+            self._statuses[key] = BackendStatus(
+                prev.key, prev.label, False, prev.model, prev.key == self._active_key
+            )
+        log.info(f"Backend '{key}' marked DOWN ({reason})")
         self._notify()
 
     def get_statuses(self) -> list[BackendStatus]:

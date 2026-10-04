@@ -92,24 +92,30 @@ class AssistantFSM:
 
         log.info(f"FSM started (input_mode={self.input_mode.name})")
 
-        from src.tools.player import resume
+        from src.runtime_state import assistant_idle
+        from src.tools.player import release
 
         try:
             while state != State.SHUTDOWN:
                 handler = self._handlers[state]
                 prev = state
                 state, ctx = handler(ctx)
+                if state == State.IDLE:
+                    assistant_idle.set()
+                else:
+                    assistant_idle.clear()
                 if state == State.IDLE and prev != State.IDLE:
                     # Wake-word trigger pauses the radio; whichever way the turn ended
-                    # (no speech, switch command, normal reply) restart it. No-op if
-                    # nothing was paused.
-                    resume()
+                    # (no speech, switch command, normal reply) let go of the audio device;
+                    # the radio restarts once nothing else (e.g. an alert) holds it either.
+                    release("interaction")
                 if state != prev:
                     log.info(f"State: {prev.name} → {state.name}")
                     if self.ui_bus is not None:
                         self.ui_bus.state_changed.emit(state.name)
         finally:
-            resume()  # an exception mid-turn must not leave the radio paused
+            assistant_idle.set()  # never leave a waiting local summary blocked on shutdown
+            release("interaction")  # an exception mid-turn must not leave the radio paused
             self.memory.close_session(self.session_id)
             log.info("Session closed on shutdown.")
 
@@ -156,11 +162,11 @@ class AssistantFSM:
                             self.session_id = new_sid
                     else:
                         break  # wake word detected; mic released
-                # Pause any playing stream so STT can hear cleanly; resume() fires
-                # at the end of _state_thinking after TTS has finished.
-                from src.tools.player import pause
+                # Take the audio device from any playing stream so STT can hear cleanly;
+                # release() fires at the end of _state_thinking after TTS has finished.
+                from src.tools.player import hold
 
-                pause()
+                hold("interaction")
                 proc = self.tts.play_greeting()
                 if proc is not None:
                     proc.wait()  # wait for greeting to finish before recording
@@ -226,7 +232,12 @@ class AssistantFSM:
     def _state_thinking(self, ctx: dict) -> tuple[State, dict]:
         """Route, run LLM with tools, stream TTS."""
         from src.llm.backends import LlamaCppBackend, OllamaBackend
-        from src.main import run_llm_with_tools
+        from src.main import (
+            TurnProgress,
+            is_connectivity_error,
+            run_llm_with_tools,
+            strip_untrusted_tool_messages,
+        )
         from src.monitor import LatencyRecord, Timer, check_thresholds, snapshot
         from src.tools.executor import ALL_TOOLS, VOLATILE_TOOLS
 
@@ -260,8 +271,8 @@ class AssistantFSM:
             confirm = f"Switched to {decision.backend_key}."
             self._speak_with_ui(confirm)
             self.last_interaction_time = time.time()
-            from src.tools.player import resume
-            resume()
+            from src.tools.player import release
+            release("interaction")
             return State.IDLE, {}
 
         if self.ui_bus is not None:
@@ -288,6 +299,7 @@ class AssistantFSM:
         # LLM + Tools + TTS
         tools_used: set[str] = set()
         tool_delta: list[dict] = []
+        progress = TurnProgress()
         try:
             response, tools_used, tool_delta = run_llm_with_tools(
                 backend,
@@ -298,9 +310,19 @@ class AssistantFSM:
                 latency,
                 thinking_proc=thinking_proc,
                 ui_bus=self.ui_bus,
+                progress=progress,
             )
         except Exception as e:
             log.error(f"LLM failed ({decision.backend_key}): {e}")
+            # Stop trying a dead GPU PC on every question; the 60 s poll flips it back up.
+            # Only for connection/timeout errors: a bug in our own code must not take the
+            # GPU PC out of routing.
+            if (
+                actual_key == "remote"
+                and getattr(self, "_health", None) is not None
+                and is_connectivity_error(e)
+            ):
+                self._health.mark_down("remote", f"request failed: {e}")
             if decision.is_explicit:
                 # User explicitly requested this backend — voice the error, reset to auto routing.
                 error_msg = (
@@ -310,6 +332,23 @@ class AssistantFSM:
                 self.router.session_preference = None
                 self._speak_with_ui(error_msg)
                 response = error_msg
+            elif not progress.safe_to_retry():
+                # Part of the reply was already spoken, or a tool with side effects already
+                # ran. Re-running the whole turn on another backend would repeat both.
+                log.warning(
+                    f"{decision.backend_key} failed mid-turn (spoke={progress.spoke}, "
+                    f"tools={sorted(progress.tools)}); not re-running on a fallback"
+                )
+                done = progress.completed_action_results()
+                if done:
+                    # The action DID happen: say so, so the user does not ask again and
+                    # get it done twice.
+                    response = (
+                        " ".join(done) + " But I lost my connection before I could say more."
+                    )
+                else:
+                    response = "Sorry, I lost my connection partway through. Please ask again."
+                self._speak_with_ui(response)
             else:
                 fallback = self.router.get_fallback(decision.backend_key)
                 if fallback:
@@ -340,13 +379,19 @@ class AssistantFSM:
                     response = "Sorry, I'm having trouble right now."
                     self._speak_with_ui(response)
 
+        # A failed turn leaves no assistant message, so history would end with an unanswered
+        # user message (and two in a row on the next turn). Record what was actually said.
+        if not tool_delta and response:
+            tool_delta = [{"role": "assistant", "content": response}]
+
         # Store response in conversation history
         if tools_used & VOLATILE_TOOLS:
             self.conversation.pop()  # Remove user message — no stale data in context
         else:
             # Extend with full delta (tool calls, results, final response) so the
-            # local 2B model sees the correct tool-call pattern on the next turn.
-            self.conversation.extend(tool_delta)
+            # local 2B model sees the correct tool-call pattern on the next turn. Raw web
+            # search output is dropped: it is untrusted text and must not linger in history.
+            self.conversation.extend(strip_untrusted_tool_messages(tool_delta))
 
         # Metrics
         latency.total_ms = (time.perf_counter() - start) * 1000
@@ -374,10 +419,10 @@ class AssistantFSM:
 
         self.last_interaction_time = time.time()
 
-        # Resume any stream that pause() suspended on the wake-word trigger.
-        from src.tools.player import resume
+        # Let go of the audio device taken on the wake-word trigger (radio restarts if free).
+        from src.tools.player import release
 
-        resume()
+        release("interaction")
 
         return State.IDLE, {}
 

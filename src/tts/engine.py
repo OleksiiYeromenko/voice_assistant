@@ -52,6 +52,9 @@ def _apply_amixer_volume(card: str, level: int) -> None:
     log.warning("TTS volume: no working control found on card %s (tried %s)", card, _AMIXER_CONTROLS)
 
 
+_ALERT_LOCK_WAIT_S = 20.0  # how long an alert waits for a reply that is being spoken
+_ALERT_ATTEMPTS = 4  # playback tries for an alert (device may be briefly busy)
+_ALERT_RETRY_DELAY_S = 1.0
 _MAX_PIPER_FAILURES = 3  # consecutive in-process errors before falling back to the CLI for good
 
 
@@ -120,6 +123,9 @@ class TTSEngine:
         # spawning the `piper` CLI per sentence, which reloads the voice every time.
         self._piper_voice = None
         self._piper_failures = 0  # consecutive in-process failures (see synthesize())
+        # Held while a reply/alert is being spoken so two threads never fight over the
+        # exclusive ALSA device (a timer alert firing mid-reply used to fail "device busy").
+        self._audio_lock = threading.RLock()
         self._synth_lock = threading.Lock()  # alerts can speak while a reply is synthesizing
         self._beep_wav: bytes | None = None
         self._startup_sounds: list[Path] = []
@@ -357,10 +363,12 @@ class TTSEngine:
         else:
             self._wait_for_playback(pre_proc)
 
-    def _wait_for_playback(self, proc: subprocess.Popen | None, poll_interval: float = 0.05):
-        """Wait for playback process to finish."""
+    def _wait_for_playback(
+        self, proc: subprocess.Popen | None, poll_interval: float = 0.05
+    ) -> bool:
+        """Wait for playback process to finish. Returns True if it played cleanly."""
         if proc is None:
-            return
+            return True
 
         try:
             proc.wait()
@@ -368,6 +376,8 @@ class TTSEngine:
                 stderr = proc.stderr.read().decode().strip() if proc.stderr else ""
                 if stderr:
                     log.error(f"Playback error: {stderr}")
+                return False
+            return True
         finally:
             if proc.stderr:
                 proc.stderr.close()
@@ -376,12 +386,57 @@ class TTSEngine:
         """Synthesize and play a complete text (blocking)."""
         if not text.strip():
             return
-        wav_data, synth_time = self.synthesize(text)
-        log.info(f"TTS: {synth_time:.2f}s synth")
-        proc = self._start_playback(wav_data)
-        self._wait_for_playback(proc)
+        with self._audio_lock:
+            wav_data, synth_time = self.synthesize(text)
+            log.info(f"TTS: {synth_time:.2f}s synth")
+            proc = self._start_playback(wav_data)
+            self._wait_for_playback(proc)
+
+    def speak_alert(self, text: str):
+        """Speak a background alert (e.g. a timer) without losing it to a busy audio device.
+
+        Called from a timer thread, so it may fire while a reply is being spoken or the
+        radio is playing: wait (bounded) for any reply to finish, keep the radio off the
+        device while it plays, and retry playback briefly if something else still has it.
+        """
+        if not text.strip():
+            return
+        from src.tools.player import hold, release
+
+        got_lock = self._audio_lock.acquire(timeout=_ALERT_LOCK_WAIT_S)
+        try:
+            # Registered holder, not a bare pause/resume: the radio restarts only when the
+            # assistant's own turn is also done with the device (see player.hold).
+            hold("alert")
+            wav_data, _ = self.synthesize(text)
+            for attempt in range(1, _ALERT_ATTEMPTS + 1):
+                if self._wait_for_playback(self._start_playback(wav_data)):
+                    return
+                log.warning(f"Alert playback failed (attempt {attempt}/{_ALERT_ATTEMPTS})")
+                time.sleep(_ALERT_RETRY_DELAY_S)
+            log.error(f"Alert could not be played: {text!r}")
+        except Exception as e:
+            log.error(f"Alert failed: {e}")
+        finally:
+            release("alert")
+            if got_lock:
+                self._audio_lock.release()
 
     def stream_speak(
+        self,
+        token_stream: Generator[str, None, None],
+        latency=None,
+        pre_proc: subprocess.Popen | None = None,
+    ) -> Generator[str, None, None]:
+        """Speak a token stream sentence by sentence (see _stream_speak).
+
+        Holds the audio lock for the whole stream so a timer alert waits for the reply
+        instead of colliding with it on the audio device.
+        """
+        with self._audio_lock:
+            yield from self._stream_speak(token_stream, latency=latency, pre_proc=pre_proc)
+
+    def _stream_speak(
         self,
         token_stream: Generator[str, None, None],
         latency=None,

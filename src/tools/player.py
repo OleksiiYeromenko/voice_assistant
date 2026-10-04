@@ -37,6 +37,7 @@ _current_url: str | None = None  # URL of the active/last stream
 _was_playing_before_pause: bool = False
 _paused_url: str | None = None  # saved URL so resume() can restart
 _paused_station: str | None = None  # saved station name for display
+_holders: set[str] = set()  # who currently needs the audio device free (see hold/release)
 
 _radio_change_callback = None  # (station_name: str) → None; "" means stopped
 
@@ -123,7 +124,7 @@ def play_radio(query: str) -> str:
 
     query = (query or "").strip()
     if not query:
-        return "I need a station name or genre to play."
+        return "ERROR: No station name or genre was given. Ask the user what to play."
 
     query = _normalize_spelled_letters(query)
     want_random, country_code, genre = _parse_radio_query(query)
@@ -140,10 +141,16 @@ def play_radio(query: str) -> str:
             )
     except Exception as e:
         log.error(f"Radio Browser search failed: {e}")
-        return f"Couldn't reach the radio directory: {e}"
+        return (
+            f"ERROR: Couldn't reach the radio directory: {e}."
+            " Tell the user the radio is unavailable; do not invent a station."
+        )
 
     if not stations:
-        return f"No stations found for '{query}'."
+        return (
+            f"ERROR: No stations found for '{query}'."
+            " Tell the user and offer to try something else."
+        )
 
     if country_code:
         filtered = [s for s in stations if s.get("countrycode", "").upper() == country_code]
@@ -154,7 +161,10 @@ def play_radio(query: str) -> str:
     url = chosen.get("url_resolved") or chosen.get("url")
     name = chosen.get("name", "").strip() or query
     if not url:
-        return f"No playable station found for '{query}'."
+        return (
+            f"ERROR: No playable station found for '{query}'."
+            " Tell the user and offer to try something else."
+        )
 
     with _lock:
         _stop_locked()
@@ -188,7 +198,7 @@ def set_volume(level: int) -> str:
     try:
         level = int(level)
     except (TypeError, ValueError):
-        return "Volume must be a number between 0 and 100."
+        return "ERROR: Volume must be a number between 0 and 100. Ask the user for a level."
     level = _clamp_volume(level)
 
     with _lock:
@@ -221,8 +231,10 @@ def get_radio_status() -> dict:
     return {"station": station, "active": active}
 
 
-def pause() -> None:
+def pause() -> bool:
     """Kill the current stream to release the audio device; save state for resume().
+
+    Returns True if it stopped a running stream (so the caller knows it owes a resume()).
 
     IPC-pausing mpv does not reliably close the exclusive ALSA device, so we
     terminate the process outright and restart it in resume() once TTS is done.
@@ -231,7 +243,7 @@ def pause() -> None:
     was_killed = False
     with _lock:
         if _mpv_proc is None or _mpv_proc.poll() is not None:
-            return
+            return False
         # Read stream info before _stop_locked() clears it.
         url = _current_url
         station = _current_station
@@ -245,10 +257,35 @@ def pause() -> None:
         # ALSA holds the device briefly after the process exits; give it a moment
         # so that the greeting sound played immediately after can open the device.
         time.sleep(0.15)
+    return was_killed
+
+
+def hold(owner: str) -> None:
+    """Keep the radio off the audio device on behalf of ``owner`` until release(owner).
+
+    Several things need the device without the radio on it: the assistant's own turn
+    (wake word -> reply) and timer alerts. With a bare pause()/resume() pair, one of
+    them finishing could restart the radio under the other (an alert waiting behind a
+    reply, or a wake word arriving mid-alert). Here the radio is only restarted when
+    the LAST holder lets go.
+    """
+    with _lock:
+        _holders.add(owner)
+    pause()
+
+
+def release(owner: str) -> None:
+    """Let go of hold(owner); restart the radio (or a station queued by play_radio) if
+    nobody else is still holding the device. Safe to call when not holding."""
+    with _lock:
+        _holders.discard(owner)
+        still_held = bool(_holders)
+    if not still_held:
+        resume()
 
 
 def resume() -> None:
-    """Start or resume a stream after TTS has finished.
+    """Start or resume a stream after TTS has finished (no-op while anyone holds the device).
 
     Two cases:
     - pause() killed a running stream, or play_radio() queued a new URL →
@@ -258,6 +295,11 @@ def resume() -> None:
     global _was_playing_before_pause, _paused_url, _paused_station
     resumed_station: str | None = None
     with _lock:
+        # Checked under the same lock as the restart itself: if a holder (the user's turn,
+        # an alert) took the device after release() looked, leave the radio off. That
+        # holder's own release() will restart it.
+        if _holders:
+            return
         if not _was_playing_before_pause:
             return
         _was_playing_before_pause = False
