@@ -255,15 +255,26 @@ class TTSEngine:
     def _synthesize_in_process(self, text: str) -> bytes:
         """Synthesize with the loaded voice; returns WAV bytes (in memory, no temp file).
 
-        Returns b"" when Piper produces no audio for this text (e.g. only punctuation):
-        in that case it never sets the WAV header and ``wave`` raises on close.
+        Returns b"" when Piper completes but produces no audio for this text (e.g. only
+        punctuation): it then never sets the WAV header. A real Piper error is NOT
+        swallowed here: it propagates so synthesize() can count it and fall back to the
+        CLI. (Closing the wave writer without a header raises wave.Error, which would
+        otherwise replace the real exception, so that close error is ignored.)
         """
         buf = io.BytesIO()
-        try:
-            with self._synth_lock, wave.open(buf, "wb") as wf:
+        with self._synth_lock:
+            wf = wave.open(buf, "wb")
+            try:
                 self._piper_voice.synthesize_wav(text, wf)
-        except wave.Error:
-            return b""
+                try:
+                    wf.getnchannels()  # raises wave.Error if the header was never set
+                except wave.Error:
+                    return b""
+            finally:
+                try:
+                    wf.close()
+                except wave.Error:
+                    pass  # no header was written: nothing to flush
         return buf.getvalue()
 
     def synthesize(self, text: str) -> tuple[bytes, float]:
